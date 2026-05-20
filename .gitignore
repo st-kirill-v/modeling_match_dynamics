@@ -12,6 +12,7 @@ htmlcov/
 
 # Local data and generated artifacts
 data/
+outputs/
 outputs/figures/*.png
 outputs/metrics/*.csv
 outputs/models/
