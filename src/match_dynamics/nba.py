@@ -290,6 +290,97 @@ def build_nba_matched_dataset(
     return matched
 
 
+def parse_score(score) -> tuple[float, float]:
+    if pd.isna(score):
+        return np.nan, np.nan
+    parts = str(score).replace(" ", "").split("-")
+    if len(parts) != 2:
+        return np.nan, np.nan
+    # NBA API play-by-play SCORE is visitor-home, e.g. ORL at WAS starts 2-0 after visitor scores.
+    return float(parts[0]), float(parts[1])
+
+
+def add_score_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    parsed = out["SCORE"].apply(parse_score)
+    out["visitor_score_from_score"] = [p[0] for p in parsed]
+    out["home_score_from_score"] = [p[1] for p in parsed]
+    out = out.sort_values(["game_id", "period", "event_id"])
+    out["visitor_score_ffill"] = out.groupby("game_id")["visitor_score_from_score"].ffill().fillna(0)
+    out["home_score_ffill"] = out.groupby("game_id")["home_score_from_score"].ffill().fillna(0)
+    out["score_diff_home"] = out["home_score_ffill"] - out["visitor_score_ffill"]
+    return out
+
+
+def build_nba_final_score_checkpoint_dataset(
+    matched_df: pd.DataFrame,
+    checkpoint_seconds: float = 300.0,
+) -> pd.DataFrame:
+    df = add_score_columns(matched_df)
+    rows = []
+    movement_cols = [
+        "game_clock_start",
+        "shot_clock_start",
+        "shot_clock_end",
+        "avg_distance",
+        "std_distance",
+        "spread_x",
+        "spread_y",
+        "ball_hoop_dist",
+        "min_player_hoop_dist",
+        "players_near_hoop",
+        "intensity",
+    ]
+    event_count_cols = ["shot_attempt", "shot_made", "shot_missed", "free_throw", "turnover", "foul"]
+
+    for game_id, group in df.groupby("game_id"):
+        group = group.sort_values(["period", "event_id"]).copy()
+        scored = group.dropna(subset=["SCORE"])
+        if scored.empty:
+            continue
+        final_visitor = float(scored.iloc[-1]["visitor_score_from_score"])
+        final_home = float(scored.iloc[-1]["home_score_from_score"])
+
+        fourth = group[group["period"].eq(4)]
+        checkpoint_candidates = fourth[fourth["game_clock_start"].le(checkpoint_seconds)]
+        if checkpoint_candidates.empty:
+            # TODO: Overtime games and games with missing 4Q tracking may need richer handling.
+            continue
+        checkpoint = checkpoint_candidates.iloc[0]
+        history = group[
+            (group["period"].lt(4))
+            | ((group["period"].eq(4)) & (group["event_id"].le(checkpoint["event_id"])))
+        ]
+        last_state = history.iloc[-1]
+
+        row = {
+            "game_id": game_id,
+            "checkpoint_event_id": int(checkpoint["event_id"]),
+            "checkpoint_seconds_remaining": float(checkpoint["game_clock_start"]),
+            "current_home_score": float(last_state["home_score_ffill"]),
+            "current_visitor_score": float(last_state["visitor_score_ffill"]),
+            "current_score_diff_home": float(last_state["score_diff_home"]),
+            "current_total_score": float(
+                last_state["home_score_ffill"] + last_state["visitor_score_ffill"]
+            ),
+            "final_home_score": final_home,
+            "final_visitor_score": final_visitor,
+            "final_score_diff_home": final_home - final_visitor,
+            "final_total_score": final_home + final_visitor,
+            "score_diff_change_after_checkpoint": (final_home - final_visitor)
+            - float(last_state["score_diff_home"]),
+            "home_win": int(final_home > final_visitor),
+        }
+        for col in event_count_cols:
+            row[f"{col}_before_checkpoint"] = float(history[col].sum())
+        for col in movement_cols:
+            row[f"{col}_at_checkpoint"] = float(last_state[col])
+            row[f"{col}_mean_before_checkpoint"] = float(history[col].mean())
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def build_nba_possession_proxy(nba_tracking_raw: pd.DataFrame) -> pd.DataFrame:
     if nba_tracking_raw.empty:
         return pd.DataFrame()

@@ -10,7 +10,10 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     log_loss,
+    mean_absolute_error,
+    mean_squared_error,
     precision_score,
+    r2_score,
     recall_score,
     roc_auc_score,
 )
@@ -50,6 +53,15 @@ def evaluate_binary(y_true: np.ndarray, prob: np.ndarray, name: str) -> dict:
         "log_loss": log_loss(y_true, prob, labels=[0, 1]),
         "brier": brier_score_loss(y_true, prob),
         "top_decile_lift": top_decile_lift(y_true, prob),
+    }
+
+
+def evaluate_regression(y_true: np.ndarray, pred: np.ndarray, name: str) -> dict:
+    return {
+        "model": name,
+        "mae": mean_absolute_error(y_true, pred),
+        "rmse": mean_squared_error(y_true, pred) ** 0.5,
+        "r2": r2_score(y_true, pred) if len(y_true) > 1 else np.nan,
     }
 
 

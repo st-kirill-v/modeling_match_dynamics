@@ -20,22 +20,28 @@
 uv sync --python 3.13
 ```
 
-Быстрый локальный запуск без скачивания NBA:
+Football-only pipeline:
+
+```powershell
+uv run python scripts\run_football_pipeline.py
+```
+
+Football-only quick check без LSTM:
+
+```powershell
+uv run python scripts\run_football_pipeline.py --skip-lstm
+```
+
+NBA-only pipeline: прогноз финального счёта/исхода из состояния за 5 минут до конца матча:
+
+```powershell
+uv run python scripts\run_nba_pipeline.py
+```
+
+Legacy combined pipeline, если нужно прогнать оба блока одной командой:
 
 ```powershell
 uv run python scripts\run_pipeline.py
-```
-
-Быстрая проверка архитектуры без обучения LSTM:
-
-```powershell
-uv run python scripts\run_pipeline.py --skip-lstm
-```
-
-Если NBA JSON уже распакованы локально:
-
-```powershell
-uv run python scripts\run_pipeline.py --football-path "D:\Учеба\Глубокое обучение (DL)\Football Events.zip" --nba-json-dir "path\to\nba_json"
 ```
 
 ## NBA Matched Dataset
@@ -72,7 +78,7 @@ data/processed/nba_matched_events_50.csv
 Можно явно передать другой prepared CSV:
 
 ```powershell
-uv run python scripts\run_pipeline.py --nba-matched-path "path\to\nba_matched.csv"
+uv run python scripts\run_nba_pipeline.py --nba-matched-path "path\to\nba_matched.csv"
 ```
 
 ## Структура

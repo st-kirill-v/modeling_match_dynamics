@@ -6,6 +6,10 @@ import warnings
 import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from .config import (
     BASE_FOOTBALL_FEATURES,
@@ -21,7 +25,13 @@ from .config import (
     ProjectConfig,
 )
 from .data_loading import ensure_football_events
-from .evaluation import calibration_table, compute_weights, confusion_frame, evaluate_binary
+from .evaluation import (
+    calibration_table,
+    compute_weights,
+    confusion_frame,
+    evaluate_binary,
+    evaluate_regression,
+)
 from .football import (
     add_team_strength,
     build_team_strength,
@@ -29,7 +39,7 @@ from .football import (
     preprocess_football_events,
 )
 from .models import build_football_tabular_baseline, build_lstm_binary, build_nba_baselines
-from .nba import nba_feature_importance
+from .nba import build_nba_final_score_checkpoint_dataset, nba_feature_importance
 from .sequences import make_sequences, scale_split, split_match_ids
 from .visualization import (
     save_calibration_curve,
@@ -41,9 +51,11 @@ from .visualization import (
 )
 
 
-def set_global_seed() -> None:
+def set_global_seed(include_tensorflow: bool = True) -> None:
     np.random.seed(RANDOM_STATE)
     random.seed(RANDOM_STATE)
+    if not include_tensorflow:
+        return
     try:
         import tensorflow as tf
 
@@ -300,4 +312,203 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
         "nba_possession_df": nba_possession_df,
         "metrics_df": metrics_df,
         "best_model": best_name,
+    }
+
+
+def run_football_pipeline(cfg: ProjectConfig) -> dict:
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=ConvergenceWarning)
+    set_global_seed()
+    cfg.ensure_dirs()
+
+    print("[1/7] Loading Football Events...")
+    df_events = ensure_football_events(cfg)
+    print(f"      Football Events shape: {df_events.shape}")
+
+    print("[2/7] Preprocessing Football...")
+    football_minute, football_model_df = preprocess_football_events(df_events)
+    print(f"      football_model_df shape: {football_model_df.shape}")
+
+    print("[3/7] Splitting Football and adding train-only team strength...")
+    football_train, football_val, football_test = split_football_with_team_strength(football_model_df)
+
+    football_features = TIME_FEATURE_SETS["raw_plus_sincos"] + TEAM_STRENGTH_FEATURES
+    print("[4/7] Building Football LSTM sequences...")
+    sequence_data, _ = build_sequence_data(football_train, football_val, football_test, football_features)
+
+    print("[5/7] Training Football LSTM models..." if not cfg.skip_lstm else "[5/7] Skipping Football LSTM models...")
+    football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
+
+    print("[6/7] Training Football tabular baselines and plots...")
+    tabular_models = train_football_tabular_baselines(football_train)
+    target_for_analysis = "home_scores_next_half"
+    corr = football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]].corr(numeric_only=True)[
+        target_for_analysis
+    ].drop(target_for_analysis)
+    top_cols = corr.abs().sort_values(ascending=False).head(20).index.tolist() + [target_for_analysis]
+    save_correlation_heatmap(
+        football_model_df,
+        top_cols,
+        "Football top correlations with home_scores_next_half",
+        cfg.figures_dir / "football_correlations.png",
+    )
+    football_importance = football_feature_importance(
+        football_model_df, BASE_FOOTBALL_FEATURES, target_for_analysis
+    )
+    football_importance.to_csv(cfg.metrics_dir / "football_feature_importance.csv", index=False)
+    save_feature_importance(
+        football_importance,
+        "Football feature importance",
+        cfg.figures_dir / "football_feature_importance.png",
+    )
+
+    print("[7/7] Evaluating Football models...")
+    metrics_df, prob_store = evaluate_all(
+        football_models,
+        tabular_models,
+        sequence_data,
+        football_test,
+        cfg=cfg,
+    )
+    metrics_df.to_csv(cfg.metrics_dir / "football_metrics.csv", index=False)
+    if not metrics_df.empty:
+        best_name = metrics_df.iloc[0]["model"]
+        y_best, p_best = prob_store[best_name]
+        confusion_frame(y_best, p_best).to_csv(cfg.metrics_dir / "football_best_confusion_matrix.csv")
+        calib = calibration_table(y_best, p_best)
+        calib.to_csv(cfg.metrics_dir / "football_best_calibration.csv")
+        if football_histories:
+            save_football_training_curves(
+                football_histories,
+                FOOTBALL_TARGETS,
+                cfg.figures_dir / "football_lstm_training_curves.png",
+            )
+        save_confusion_matrix(
+            y_best,
+            p_best,
+            f"Confusion matrix: {best_name}",
+            cfg.figures_dir / "football_best_confusion_matrix.png",
+        )
+        save_pr_curve(
+            y_best,
+            p_best,
+            f"PR curve: {best_name}",
+            cfg.figures_dir / "football_best_pr_curve.png",
+        )
+        save_calibration_curve(
+            calib,
+            f"Calibration: {best_name}",
+            cfg.figures_dir / "football_best_calibration_curve.png",
+        )
+    return {"metrics_df": metrics_df, "football_model_df": football_model_df}
+
+
+NBA_FINAL_SCORE_FEATURES = [
+    "checkpoint_seconds_remaining",
+    "current_home_score",
+    "current_visitor_score",
+    "current_score_diff_home",
+    "current_total_score",
+    "shot_attempt_before_checkpoint",
+    "shot_made_before_checkpoint",
+    "shot_missed_before_checkpoint",
+    "free_throw_before_checkpoint",
+    "turnover_before_checkpoint",
+    "foul_before_checkpoint",
+    "ball_hoop_dist_at_checkpoint",
+    "min_player_hoop_dist_at_checkpoint",
+    "players_near_hoop_at_checkpoint",
+    "intensity_at_checkpoint",
+    "avg_distance_mean_before_checkpoint",
+    "std_distance_mean_before_checkpoint",
+    "spread_x_mean_before_checkpoint",
+    "spread_y_mean_before_checkpoint",
+]
+
+
+def _nba_regressors() -> dict:
+    return {
+        "ridge": make_pipeline(StandardScaler(), Ridge(alpha=1.0)),
+        "hist_gbdt": HistGradientBoostingRegressor(max_iter=200, learning_rate=0.06, random_state=RANDOM_STATE),
+        "random_forest": RandomForestRegressor(n_estimators=200, max_depth=8, random_state=RANDOM_STATE, n_jobs=-1),
+    }
+
+
+def _nba_classifiers() -> dict:
+    return {
+        "logreg": make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, class_weight="balanced")),
+        "hist_gbdt": HistGradientBoostingClassifier(max_iter=200, learning_rate=0.06, random_state=RANDOM_STATE),
+        "random_forest": RandomForestClassifier(
+            n_estimators=200,
+            max_depth=8,
+            class_weight="balanced",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+    }
+
+
+def run_nba_pipeline(cfg: ProjectConfig) -> dict:
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=ConvergenceWarning)
+    set_global_seed(include_tensorflow=False)
+    cfg.ensure_dirs()
+
+    nba_path = cfg.nba_matched_path or cfg.default_nba_matched_path
+    print("[1/5] Loading prepared NBA matched dataset...")
+    if not nba_path.exists():
+        raise FileNotFoundError(
+            f"Prepared NBA matched dataset not found: {nba_path}. "
+            "Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50"
+        )
+    matched = pd.read_csv(nba_path)
+    print(f"      matched shape: {matched.shape}, games: {matched['game_id'].nunique()}")
+
+    print("[2/5] Building 5-minute final-score checkpoint dataset...")
+    checkpoint_df = build_nba_final_score_checkpoint_dataset(matched, checkpoint_seconds=300.0)
+    checkpoint_df = checkpoint_df.dropna(subset=NBA_FINAL_SCORE_FEATURES + ["home_win"])
+    checkpoint_path = cfg.data_dir / "processed" / "nba_final_score_checkpoint_5min.csv"
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_df.to_csv(checkpoint_path, index=False)
+    print(f"      checkpoint shape: {checkpoint_df.shape}")
+    print(f"      saved: {checkpoint_path}")
+
+    train_ids, _, test_ids = split_match_ids(checkpoint_df, match_col="game_id")
+    train = checkpoint_df[checkpoint_df["game_id"].isin(train_ids)].copy()
+    test = checkpoint_df[checkpoint_df["game_id"].isin(test_ids)].copy()
+    print(f"[3/5] Split by game_id: train={len(train)}, test={len(test)}")
+
+    X_train, X_test = train[NBA_FINAL_SCORE_FEATURES], test[NBA_FINAL_SCORE_FEATURES]
+    reg_targets = ["final_home_score", "final_visitor_score", "final_score_diff_home", "score_diff_change_after_checkpoint"]
+
+    print("[4/5] Training NBA final-score regressors...")
+    regression_rows = []
+    for target in reg_targets:
+        for name, model in _nba_regressors().items():
+            model.fit(X_train, train[target])
+            pred = model.predict(X_test)
+            regression_rows.append(evaluate_regression(test[target].to_numpy(), pred, f"NBA_{name}_{target}"))
+    regression_metrics = pd.DataFrame(regression_rows).sort_values(["mae", "rmse"])
+    regression_metrics.to_csv(cfg.metrics_dir / "nba_final_score_regression_metrics.csv", index=False)
+
+    print("[5/5] Training NBA winner classifier...")
+    classification_rows, prob_store = [], {}
+    for name, model in _nba_classifiers().items():
+        model.fit(X_train, train["home_win"].astype(int))
+        prob = model.predict_proba(X_test)[:, 1]
+        model_name = f"NBA_{name}_home_win_5min"
+        classification_rows.append(evaluate_binary(test["home_win"].astype(int), prob, model_name))
+        prob_store[model_name] = (test["home_win"].astype(int).to_numpy(), prob)
+    classification_metrics = pd.DataFrame(classification_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
+    classification_metrics.to_csv(cfg.metrics_dir / "nba_home_win_classification_metrics.csv", index=False)
+
+    print("\nNBA final-score regression metrics:")
+    print(regression_metrics.to_string(index=False))
+    print("\nNBA home-win classification metrics:")
+    print(classification_metrics.to_string(index=False))
+
+    return {
+        "checkpoint_df": checkpoint_df,
+        "regression_metrics": regression_metrics,
+        "classification_metrics": classification_metrics,
     }
