@@ -31,6 +31,8 @@ def build_lstm_binary(input_shape: tuple[int, int], name: str):
             "accuracy",
             tf.keras.metrics.Precision(name="precision"),
             tf.keras.metrics.Recall(name="recall"),
+            tf.keras.metrics.MeanSquaredError(name="mse"),
+            tf.keras.metrics.MeanAbsoluteError(name="mae"),
         ],
     )
     return model

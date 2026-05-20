@@ -57,10 +57,12 @@ def evaluate_binary(y_true: np.ndarray, prob: np.ndarray, name: str) -> dict:
 
 
 def evaluate_regression(y_true: np.ndarray, pred: np.ndarray, name: str) -> dict:
+    mse = mean_squared_error(y_true, pred)
     return {
         "model": name,
         "mae": mean_absolute_error(y_true, pred),
-        "rmse": mean_squared_error(y_true, pred) ** 0.5,
+        "mse": mse,
+        "rmse": mse ** 0.5,
         "r2": r2_score(y_true, pred) if len(y_true) > 1 else np.nan,
     }
 

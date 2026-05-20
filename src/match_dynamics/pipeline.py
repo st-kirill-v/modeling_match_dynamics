@@ -46,6 +46,7 @@ from .visualization import (
     save_confusion_matrix,
     save_correlation_heatmap,
     save_feature_importance,
+    save_football_error_curves,
     save_football_training_curves,
     save_pr_curve,
 )
@@ -293,6 +294,11 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
             FOOTBALL_TARGETS,
             cfg.figures_dir / "football_lstm_training_curves.png",
         )
+        save_football_error_curves(
+            football_histories,
+            FOOTBALL_TARGETS,
+            cfg.figures_dir / "football_lstm_mse_mae_curves.png",
+        )
     save_confusion_matrix(
         y_best,
         p_best,
@@ -382,6 +388,11 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
                 football_histories,
                 FOOTBALL_TARGETS,
                 cfg.figures_dir / "football_lstm_training_curves.png",
+            )
+            save_football_error_curves(
+                football_histories,
+                FOOTBALL_TARGETS,
+                cfg.figures_dir / "football_lstm_mse_mae_curves.png",
             )
         save_confusion_matrix(
             y_best,

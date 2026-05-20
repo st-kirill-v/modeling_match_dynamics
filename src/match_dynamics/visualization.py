@@ -27,6 +27,27 @@ def save_football_training_curves(histories: dict, targets: list[str], output_pa
     plt.close(fig)
 
 
+def save_football_error_curves(histories: dict, targets: list[str], output_path: Path) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    for ax, target in zip(axes[0], targets):
+        h = histories[target]
+        if "mse" in h.history:
+            ax.plot(h.history["mse"], label="train")
+            ax.plot(h.history["val_mse"], label="val")
+        ax.set_title(f"Football MSE: {target}")
+        ax.legend()
+    for ax, target in zip(axes[1], targets):
+        h = histories[target]
+        if "mae" in h.history:
+            ax.plot(h.history["mae"], label="train")
+            ax.plot(h.history["val_mae"], label="val")
+        ax.set_title(f"Football MAE: {target}")
+        ax.legend()
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def save_confusion_matrix(y_true, prob, title: str, output_path: Path) -> None:
     fig = plt.figure(figsize=(5, 4))
     sns.heatmap(
