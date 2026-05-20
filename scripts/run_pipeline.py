@@ -1,11 +1,42 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+
+def ensure_uv_environment() -> None:
+    """Re-run through uv when the script is started with a bare Python interpreter."""
+    if os.environ.get("MATCH_DYNAMICS_UV_BOOTSTRAPPED") == "1":
+        return
+
+    try:
+        import numpy  # noqa: F401
+    except ModuleNotFoundError:
+        uv_path = shutil.which("uv")
+        if uv_path is None:
+            print(
+                "Dependencies are not installed for this Python. Install uv first, then run:\n"
+                "  uv sync --python 3.13\n"
+                "  uv run python scripts\\run_pipeline.py --football-path "
+                '"D:\\Учеба\\Глубокое обучение (DL)\\Football Events.zip" --skip-nba-download',
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        env = os.environ.copy()
+        env["MATCH_DYNAMICS_UV_BOOTSTRAPPED"] = "1"
+        cmd = [uv_path, "run", "python", str(Path(__file__).resolve()), *sys.argv[1:]]
+        raise SystemExit(subprocess.call(cmd, cwd=PROJECT_ROOT, env=env))
+
+
+ensure_uv_environment()
 
 from match_dynamics.config import ProjectConfig
 from match_dynamics.pipeline import run_pipeline

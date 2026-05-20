@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run pipeline",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}\\scripts\\run_pipeline.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--football-path",
+        "D:\\Учеба\\Глубокое обучение (DL)\\Football Events.zip",
+        "--skip-nba-download"
+      ]
+    },
+    {
+      "name": "Run quick check",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}\\scripts\\run_pipeline.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--football-path",
+        "D:\\Учеба\\Глубокое обучение (DL)\\Football Events.zip",
+        "--skip-lstm",
+        "--skip-nba-download"
+      ]
+    }
+  ]
+}
