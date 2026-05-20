@@ -2,11 +2,44 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
+import sys
 import textwrap
 import urllib.request
 from pathlib import Path
 from urllib.parse import quote
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def ensure_uv_environment() -> None:
+    """Re-run through uv when the script is started with a bare Python interpreter."""
+    if os.environ.get("MATCH_DYNAMICS_UV_BOOTSTRAPPED") == "1":
+        return
+
+    try:
+        import pandas  # noqa: F401
+        import py7zr  # noqa: F401
+    except ModuleNotFoundError:
+        uv_path = shutil.which("uv")
+        if uv_path is None:
+            print(
+                "Dependencies are not installed for this Python. Install uv first, then run:\n"
+                "  uv sync --python 3.13\n"
+                "  uv run python scripts\\inspect_nba_raw_sample.py",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        env = os.environ.copy()
+        env["MATCH_DYNAMICS_UV_BOOTSTRAPPED"] = "1"
+        cmd = [uv_path, "run", "python", str(Path(__file__).resolve()), *sys.argv[1:]]
+        raise SystemExit(subprocess.call(cmd, cwd=PROJECT_ROOT, env=env))
+
+
+ensure_uv_environment()
 
 import pandas as pd
 import py7zr
