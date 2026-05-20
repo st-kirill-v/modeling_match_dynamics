@@ -40,7 +40,7 @@ def build_football_tabular_baseline() -> HistGradientBoostingClassifier:
 
 def build_nba_baselines() -> dict:
     return {
-        "logreg": LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1),
+        "logreg": LogisticRegression(max_iter=1000, class_weight="balanced"),
         "hist_gbdt": HistGradientBoostingClassifier(
             max_iter=200, learning_rate=0.06, random_state=42
         ),

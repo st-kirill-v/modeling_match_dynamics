@@ -26,7 +26,7 @@ def build_proxy_xg(football_events: pd.DataFrame) -> pd.DataFrame:
 
     shot_X = pd.get_dummies(shot_df[shot_cols].fillna(-1).astype(str))
     shot_y = shot_df["is_goal_fixed"].astype(int)
-    shot_xg_model = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
+    shot_xg_model = LogisticRegression(max_iter=1000, class_weight="balanced")
     shot_xg_model.fit(shot_X, shot_y)
     shot_df["proxy_xg"] = shot_xg_model.predict_proba(shot_X)[:, 1]
 

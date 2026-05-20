@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import random
+import warnings
 
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import ConvergenceWarning
 
 from .config import (
     BASE_FOOTBALL_FEATURES,
@@ -169,18 +171,33 @@ def evaluate_all(
 
 
 def run_pipeline(cfg: ProjectConfig) -> dict:
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=ConvergenceWarning)
     set_global_seed()
     cfg.ensure_dirs()
 
+    print("[1/9] Loading Football Events...")
     df_events = ensure_football_events(cfg)
+    print(f"      Football Events shape: {df_events.shape}")
+
+    print("[2/9] Preprocessing Football: proxy-xG, minute-level table, rolling features...")
     football_minute, football_model_df = preprocess_football_events(df_events)
+    print(f"      football_model_df shape: {football_model_df.shape}")
+
+    print("[3/9] Splitting Football and adding train-only team strength...")
     football_train, football_val, football_test = split_football_with_team_strength(football_model_df)
 
     football_features = TIME_FEATURE_SETS["raw_plus_sincos"] + TEAM_STRENGTH_FEATURES
+    print("[4/9] Building Football LSTM sequences...")
     sequence_data, _ = build_sequence_data(football_train, football_val, football_test, football_features)
+
+    print("[5/9] Training Football LSTM models..." if not cfg.skip_lstm else "[5/9] Skipping Football LSTM models...")
     football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
+
+    print("[6/9] Training Football tabular baselines...")
     tabular_models = train_football_tabular_baselines(football_train)
 
+    print("[7/9] Saving Football correlation and feature-importance plots...")
     target_for_analysis = "home_scores_next_half"
     corr = football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]].corr(numeric_only=True)[
         target_for_analysis
@@ -205,6 +222,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     nba_possession_df = pd.DataFrame()
     nba_train = nba_test = pd.DataFrame()
     nba_baselines = {}
+    print("[8/9] Preparing NBA possession-level proxy task...")
     json_files = ensure_nba_files(cfg)
     if json_files:
         _, nba_possession_df = preprocess_nba(json_files)
@@ -228,7 +246,10 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
                 "NBA possession feature importance",
                 cfg.figures_dir / "nba_feature_importance.png",
             )
+    else:
+        print("      NBA skipped. Use --nba-json-dir or omit --skip-nba-download to enable it.")
 
+    print("[9/9] Evaluating models and saving final plots/metrics...")
     metrics_df, prob_store = evaluate_all(
         football_models,
         tabular_models,
