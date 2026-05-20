@@ -14,7 +14,8 @@ NBA_MAX_GAMES = 20
 NBA_MOMENT_STRIDE = 50
 
 FOOTBALL_TARGETS = ["home_scores_next_half", "away_scores_next_half"]
-NBA_TARGET = "possession_is_dangerous"
+NBA_TARGET = "shot_made"
+NBA_TARGETS = ["shot_attempt", "shot_made", "turnover", "foul", "scoring_event"]
 
 
 BASE_FOOTBALL_FEATURES = [
@@ -85,6 +86,27 @@ NBA_POSSESSION_FEATURES = [
     "intensity",
 ]
 
+NBA_MATCHED_FEATURES = [
+    "period",
+    "movement_moments_total",
+    "movement_moments_sampled",
+    "game_clock_start",
+    "game_clock_end",
+    "shot_clock_start",
+    "shot_clock_end",
+    "avg_distance",
+    "std_distance",
+    "spread_x",
+    "spread_y",
+    "ball_x",
+    "ball_y",
+    "ball_hoop_dist",
+    "min_player_hoop_dist",
+    "players_near_hoop",
+    "low_shot_clock",
+    "intensity",
+]
+
 TIME_FEATURE_SETS = {
     "raw_time": [c for c in BASE_FOOTBALL_FEATURES if c not in ["time_sin", "time_cos"]],
     "sin_cos": [c for c in BASE_FOOTBALL_FEATURES if c != "time"],
@@ -106,6 +128,7 @@ class ProjectConfig:
     nba_repo_dir: Path | None = None
     nba_extract_dir: Path | None = None
     nba_json_dir: Path | None = None
+    nba_matched_path: Path | None = None
     epochs: int = EPOCHS
     main_window: int = 20
     skip_lstm: bool = False
@@ -118,6 +141,10 @@ class ProjectConfig:
     @property
     def football_events_path(self) -> Path:
         return self.football_dir / "events.csv"
+
+    @property
+    def default_nba_matched_path(self) -> Path:
+        return self.data_dir / "processed" / "nba_matched_events_50.csv"
 
     @property
     def figures_dir(self) -> Path:

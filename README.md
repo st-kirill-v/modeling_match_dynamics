@@ -8,9 +8,9 @@
 - Основные football targets: `home_scores_next_half`, `away_scores_next_half`.
 - Football LSTM видит только первый тайм (`time <= 45`) и предсказывает голы во втором тайме.
 - Старые short-horizon football targets не используются.
-- NBA Movement Data используется как possession-level proxy task с target `possession_is_dangerous`.
-- NBA proxy не выдаётся за настоящий прогноз счёта.
-- Для честного NBA scoring prediction нужен join с play-by-play.
+- NBA Movement Data используется через prepared matched dataset: movement JSON + play-by-play events + shots.
+- NBA labels теперь реальные для выбранных 50 матчей: `shot_attempt`, `shot_made`, `turnover`, `foul`, `scoring_event`.
+- Старый NBA proxy `possession_is_dangerous` оставлен в коде только как вспомогательная/историческая функция, не как основной pipeline.
 
 ## Запуск через uv
 
@@ -23,13 +23,13 @@ uv sync --python 3.13
 Быстрый локальный запуск без скачивания NBA:
 
 ```powershell
-uv run python scripts\run_pipeline.py --football-path "D:\Учеба\Глубокое обучение (DL)\Football Events.zip" --skip-nba-download
+uv run python scripts\run_pipeline.py
 ```
 
 Быстрая проверка архитектуры без обучения LSTM:
 
 ```powershell
-uv run python scripts\run_pipeline.py --football-path "D:\Учеба\Глубокое обучение (DL)\Football Events.zip" --skip-lstm --skip-nba-download
+uv run python scripts\run_pipeline.py --skip-lstm
 ```
 
 Если NBA JSON уже распакованы локально:
@@ -63,12 +63,24 @@ data/nba_matched/nba_matched_events_50.csv
 - `scoring_event`
 - `has_shot_chart_row`
 
+Основной pipeline автоматически использует:
+
+```text
+data/processed/nba_matched_events_50.csv
+```
+
+Можно явно передать другой prepared CSV:
+
+```powershell
+uv run python scripts\run_pipeline.py --nba-matched-path "path\to\nba_matched.csv"
+```
+
 ## Структура
 
 - `src/match_dynamics/config.py` - настройки, пути, targets и списки признаков.
 - `src/match_dynamics/data_loading.py` - загрузка Football Events и NBA Movement Data.
 - `src/match_dynamics/football.py` - football preprocessing, proxy-xG, rolling/momentum/pressure/team strength.
-- `src/match_dynamics/nba.py` - NBA tracking parsing и possession-level proxy target.
+- `src/match_dynamics/nba.py` - NBA tracking parsing, join movement + events + shots, matched labels.
 - `src/match_dynamics/sequences.py` - split, scaling, LSTM sequence generation.
 - `src/match_dynamics/models.py` - LSTM и baseline-модели.
 - `src/match_dynamics/evaluation.py` - метрики: PR-AUC, ROC-AUC, Brier, calibration, top-decile lift.

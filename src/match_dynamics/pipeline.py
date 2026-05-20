@@ -10,15 +10,17 @@ from sklearn.exceptions import ConvergenceWarning
 from .config import (
     BASE_FOOTBALL_FEATURES,
     FOOTBALL_TARGETS,
+    NBA_MATCHED_FEATURES,
     NBA_POSSESSION_FEATURES,
     NBA_TARGET,
+    NBA_TARGETS,
     RANDOM_STATE,
     TEAM_STRENGTH_FEATURES,
     TIME_FEATURE_SETS,
     WINDOW_EXPERIMENTS,
     ProjectConfig,
 )
-from .data_loading import ensure_football_events, ensure_nba_files
+from .data_loading import ensure_football_events
 from .evaluation import calibration_table, compute_weights, confusion_frame, evaluate_binary
 from .football import (
     add_team_strength,
@@ -27,7 +29,7 @@ from .football import (
     preprocess_football_events,
 )
 from .models import build_football_tabular_baseline, build_lstm_binary, build_nba_baselines
-from .nba import nba_feature_importance, preprocess_nba
+from .nba import nba_feature_importance
 from .sequences import make_sequences, scale_split, split_match_ids
 from .visualization import (
     save_calibration_curve,
@@ -127,9 +129,11 @@ def train_football_tabular_baselines(
 
 def train_nba_baselines(nba_train: pd.DataFrame) -> dict:
     nba_baselines = {}
-    for name, model in build_nba_baselines().items():
-        model.fit(nba_train[NBA_POSSESSION_FEATURES], nba_train[NBA_TARGET])
-        nba_baselines[name] = model
+    for target in NBA_TARGETS:
+        nba_baselines[target] = {}
+        for name, model in build_nba_baselines().items():
+            model.fit(nba_train[NBA_MATCHED_FEATURES], nba_train[target].astype(int))
+            nba_baselines[target][name] = model
     return nba_baselines
 
 
@@ -160,11 +164,12 @@ def evaluate_all(
             prob_store[name] = (football_test[target].astype(int).to_numpy(), prob)
 
     if nba_baselines and nba_test is not None and not nba_test.empty:
-        for name, model in nba_baselines.items():
-            prob = model.predict_proba(nba_test[NBA_POSSESSION_FEATURES])[:, 1]
-            model_name = f"NBA_{name}_possession"
-            metric_rows.append(evaluate_binary(nba_test[NBA_TARGET].astype(int), prob, model_name))
-            prob_store[model_name] = (nba_test[NBA_TARGET].astype(int).to_numpy(), prob)
+        for target, models_by_name in nba_baselines.items():
+            for name, model in models_by_name.items():
+                prob = model.predict_proba(nba_test[NBA_MATCHED_FEATURES])[:, 1]
+                model_name = f"NBA_{name}_{target}"
+                metric_rows.append(evaluate_binary(nba_test[target].astype(int), prob, model_name))
+                prob_store[model_name] = (nba_test[target].astype(int).to_numpy(), prob)
 
     metrics_df = pd.DataFrame(metric_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     return metrics_df, prob_store
@@ -222,32 +227,35 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     nba_possession_df = pd.DataFrame()
     nba_train = nba_test = pd.DataFrame()
     nba_baselines = {}
-    print("[8/9] Preparing NBA possession-level proxy task...")
-    json_files = ensure_nba_files(cfg)
-    if json_files:
-        _, nba_possession_df = preprocess_nba(json_files)
-        if not nba_possession_df.empty:
-            n_train_ids, _, n_test_ids = split_match_ids(nba_possession_df)
-            nba_train = nba_possession_df[nba_possession_df["match_id"].isin(n_train_ids)].copy()
-            nba_test = nba_possession_df[nba_possession_df["match_id"].isin(n_test_ids)].copy()
-            nba_baselines = train_nba_baselines(nba_train)
-            save_correlation_heatmap(
-                nba_possession_df,
-                NBA_POSSESSION_FEATURES + [NBA_TARGET],
-                "NBA possession-level correlation matrix",
-                cfg.figures_dir / "nba_correlations.png",
-            )
-            nba_importance = nba_feature_importance(
-                nba_possession_df, NBA_POSSESSION_FEATURES, NBA_TARGET
-            )
-            nba_importance.to_csv(cfg.metrics_dir / "nba_feature_importance.csv", index=False)
-            save_feature_importance(
-                nba_importance,
-                "NBA possession feature importance",
-                cfg.figures_dir / "nba_feature_importance.png",
-            )
+    print("[8/9] Loading prepared NBA matched dataset...")
+    nba_path = cfg.nba_matched_path or cfg.default_nba_matched_path
+    if nba_path.exists():
+        nba_possession_df = pd.read_csv(nba_path)
+        nba_possession_df = nba_possession_df.dropna(subset=NBA_MATCHED_FEATURES + NBA_TARGETS)
+        print(f"      NBA matched dataset: {nba_path}")
+        print(f"      shape: {nba_possession_df.shape}, games: {nba_possession_df['game_id'].nunique()}")
+        n_train_ids, _, n_test_ids = split_match_ids(nba_possession_df, match_col="game_id")
+        nba_train = nba_possession_df[nba_possession_df["game_id"].isin(n_train_ids)].copy()
+        nba_test = nba_possession_df[nba_possession_df["game_id"].isin(n_test_ids)].copy()
+        nba_baselines = train_nba_baselines(nba_train)
+        save_correlation_heatmap(
+            nba_possession_df,
+            NBA_MATCHED_FEATURES + [NBA_TARGET],
+            "NBA matched movement correlations with shot_made",
+            cfg.figures_dir / "nba_correlations.png",
+        )
+        nba_importance = nba_feature_importance(
+            nba_possession_df, NBA_MATCHED_FEATURES, NBA_TARGET
+        )
+        nba_importance.to_csv(cfg.metrics_dir / "nba_feature_importance.csv", index=False)
+        save_feature_importance(
+            nba_importance,
+            "NBA matched movement feature importance",
+            cfg.figures_dir / "nba_feature_importance.png",
+        )
     else:
-        print("      NBA skipped. Use --nba-json-dir or omit --skip-nba-download to enable it.")
+        print(f"      NBA skipped: prepared dataset not found at {nba_path}")
+        print("      Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50")
 
     print("[9/9] Evaluating models and saving final plots/metrics...")
     metrics_df, prob_store = evaluate_all(
