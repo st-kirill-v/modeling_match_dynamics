@@ -19,8 +19,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.0",
     "ruff>=0.5",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "E501"]
 
 [tool.ruff]
 line-length = 100

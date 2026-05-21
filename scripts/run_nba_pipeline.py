@@ -38,7 +38,9 @@ from match_dynamics.pipeline import run_nba_pipeline
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run NBA-only final-score pipeline.")
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Local data directory.")
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"), help="Output directory.")
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs"), help="Output directory."
+    )
     parser.add_argument(
         "--nba-matched-path",
         type=Path,

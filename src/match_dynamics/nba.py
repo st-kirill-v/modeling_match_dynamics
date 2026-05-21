@@ -286,7 +286,9 @@ def build_nba_matched_dataset(
         np.where(matched["SHOT_TYPE"].astype(str).str.startswith("3PT"), 3, 2),
         0,
     )
-    matched["scoring_event"] = ((matched["shot_made"] == 1) | (matched["free_throw"] == 1)).astype(int)
+    matched["scoring_event"] = ((matched["shot_made"] == 1) | (matched["free_throw"] == 1)).astype(
+        int
+    )
     return matched
 
 
@@ -306,7 +308,9 @@ def add_score_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["visitor_score_from_score"] = [p[0] for p in parsed]
     out["home_score_from_score"] = [p[1] for p in parsed]
     out = out.sort_values(["game_id", "period", "event_id"])
-    out["visitor_score_ffill"] = out.groupby("game_id")["visitor_score_from_score"].ffill().fillna(0)
+    out["visitor_score_ffill"] = (
+        out.groupby("game_id")["visitor_score_from_score"].ffill().fillna(0)
+    )
     out["home_score_ffill"] = out.groupby("game_id")["home_score_from_score"].ffill().fillna(0)
     out["score_diff_home"] = out["home_score_ffill"] - out["visitor_score_ffill"]
     return out
@@ -331,7 +335,14 @@ def build_nba_final_score_checkpoint_dataset(
         "players_near_hoop",
         "intensity",
     ]
-    event_count_cols = ["shot_attempt", "shot_made", "shot_missed", "free_throw", "turnover", "foul"]
+    event_count_cols = [
+        "shot_attempt",
+        "shot_made",
+        "shot_missed",
+        "free_throw",
+        "turnover",
+        "foul",
+    ]
 
     for game_id, group in df.groupby("game_id"):
         group = group.sort_values(["period", "event_id"]).copy()
@@ -417,10 +428,7 @@ def build_nba_possession_proxy(nba_tracking_raw: pd.DataFrame) -> pd.DataFrame:
         & (
             (nba_possession_df["low_shot_clock"] == 1)
             | (nba_possession_df["players_near_hoop"] >= 3)
-            | (
-                nba_possession_df["intensity"]
-                >= nba_possession_df["intensity"].quantile(0.90)
-            )
+            | (nba_possession_df["intensity"] >= nba_possession_df["intensity"].quantile(0.90))
         )
     ).astype(int)
     return nba_possession_df

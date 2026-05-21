@@ -37,9 +37,16 @@ from match_dynamics.pipeline import run_football_pipeline
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Football-only match dynamics pipeline.")
-    parser.add_argument("--football-path", type=Path, default=None, help="Path to events.csv or Football Events.zip.")
+    parser.add_argument(
+        "--football-path",
+        type=Path,
+        default=None,
+        help="Path to events.csv or Football Events.zip.",
+    )
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Local data directory.")
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"), help="Output directory.")
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs"), help="Output directory."
+    )
     parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs. Lab default is 10.")
     parser.add_argument("--main-window", type=int, default=20, help="Main LSTM window in minutes.")
     parser.add_argument("--skip-lstm", action="store_true", help="Skip Football LSTM training.")

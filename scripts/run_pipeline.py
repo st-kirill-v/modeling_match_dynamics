@@ -46,12 +46,28 @@ from match_dynamics.pipeline import run_pipeline
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run match dynamics modeling pipeline.")
-    parser.add_argument("--football-path", type=Path, default=None, help="Path to events.csv or Football Events.zip.")
+    parser.add_argument(
+        "--football-path",
+        type=Path,
+        default=None,
+        help="Path to events.csv or Football Events.zip.",
+    )
     parser.add_argument("--data-dir", type=Path, default=Path("data"), help="Local data directory.")
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"), help="Output directory.")
-    parser.add_argument("--nba-repo-dir", type=Path, default=None, help="Existing nba-movement-data repository.")
-    parser.add_argument("--nba-extract-dir", type=Path, default=None, help="Directory for extracted NBA JSON files.")
-    parser.add_argument("--nba-json-dir", type=Path, default=None, help="Directory containing extracted NBA JSON files.")
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs"), help="Output directory."
+    )
+    parser.add_argument(
+        "--nba-repo-dir", type=Path, default=None, help="Existing nba-movement-data repository."
+    )
+    parser.add_argument(
+        "--nba-extract-dir", type=Path, default=None, help="Directory for extracted NBA JSON files."
+    )
+    parser.add_argument(
+        "--nba-json-dir",
+        type=Path,
+        default=None,
+        help="Directory containing extracted NBA JSON files.",
+    )
     parser.add_argument(
         "--nba-matched-path",
         type=Path,

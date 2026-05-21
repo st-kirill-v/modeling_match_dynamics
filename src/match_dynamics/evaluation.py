@@ -47,9 +47,7 @@ def evaluate_binary(y_true: np.ndarray, prob: np.ndarray, name: str) -> dict:
         "recall": recall_score(y_true, pred, zero_division=0),
         "f1": f1_score(y_true, pred, zero_division=0),
         "roc_auc": roc_auc_score(y_true, prob) if len(np.unique(y_true)) > 1 else np.nan,
-        "pr_auc": average_precision_score(y_true, prob)
-        if len(np.unique(y_true)) > 1
-        else np.nan,
+        "pr_auc": average_precision_score(y_true, prob) if len(np.unique(y_true)) > 1 else np.nan,
         "log_loss": log_loss(y_true, prob, labels=[0, 1]),
         "brier": brier_score_loss(y_true, prob),
         "top_decile_lift": top_decile_lift(y_true, prob),
@@ -62,7 +60,7 @@ def evaluate_regression(y_true: np.ndarray, pred: np.ndarray, name: str) -> dict
         "model": name,
         "mae": mean_absolute_error(y_true, pred),
         "mse": mse,
-        "rmse": mse ** 0.5,
+        "rmse": mse**0.5,
         "r2": r2_score(y_true, pred) if len(y_true) > 1 else np.nan,
     }
 

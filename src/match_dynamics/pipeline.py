@@ -107,7 +107,9 @@ def train_football_lstm(
     for target in FOOTBALL_TARGETS:
         X_train, y_train = sequence_data[cfg.main_window][target]["train"]
         X_val, y_val = sequence_data[cfg.main_window][target]["val"]
-        model = build_lstm_binary((cfg.main_window, len(feature_cols)), f"football_{target}_w{cfg.main_window}")
+        model = build_lstm_binary(
+            (cfg.main_window, len(feature_cols)), f"football_{target}_w{cfg.main_window}"
+        )
         history = model.fit(
             X_train,
             y_train,
@@ -157,23 +159,35 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     print(f"      football_model_df shape: {football_model_df.shape}")
 
     print("[3/9] Splitting Football and adding train-only team strength...")
-    football_train, football_val, football_test = split_football_with_team_strength(football_model_df)
+    football_train, football_val, football_test = split_football_with_team_strength(
+        football_model_df
+    )
 
     football_features = TIME_FEATURE_SETS["raw_plus_sincos"] + TEAM_STRENGTH_FEATURES
     print("[4/9] Building Football LSTM sequences...")
-    sequence_data, _ = build_sequence_data(football_train, football_val, football_test, football_features)
+    sequence_data, _ = build_sequence_data(
+        football_train, football_val, football_test, football_features
+    )
 
-    print("[5/9] Training Football LSTM models..." if not cfg.skip_lstm else "[5/9] Skipping Football LSTM models...")
+    print(
+        "[5/9] Training Football LSTM models..."
+        if not cfg.skip_lstm
+        else "[5/9] Skipping Football LSTM models..."
+    )
     football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
 
     print("[6/9] Football baselines skipped: active pipeline uses LSTM only.")
 
     print("[7/9] Saving Football correlation and feature-importance plots...")
     target_for_analysis = "home_scores_next_half"
-    corr = football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]].corr(numeric_only=True)[
+    corr = (
+        football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]]
+        .corr(numeric_only=True)[target_for_analysis]
+        .drop(target_for_analysis)
+    )
+    top_cols = corr.abs().sort_values(ascending=False).head(20).index.tolist() + [
         target_for_analysis
-    ].drop(target_for_analysis)
-    top_cols = corr.abs().sort_values(ascending=False).head(20).index.tolist() + [target_for_analysis]
+    ]
     save_correlation_heatmap(
         football_model_df,
         top_cols,
@@ -196,8 +210,12 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     if nba_path.exists():
         nba_possession_df = pd.read_csv(nba_path)
         print(f"      NBA matched dataset: {nba_path}")
-        print(f"      shape: {nba_possession_df.shape}, games: {nba_possession_df['game_id'].nunique()}")
-        print("      NBA baselines skipped: use scripts\\run_nba_pipeline.py for the NBA LSTM task.")
+        print(
+            f"      shape: {nba_possession_df.shape}, games: {nba_possession_df['game_id'].nunique()}"
+        )
+        print(
+            "      NBA baselines skipped: use scripts\\run_nba_pipeline.py for the NBA LSTM task."
+        )
     else:
         print(f"      NBA skipped: prepared dataset not found at {nba_path}")
         print("      Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50")
@@ -264,21 +282,33 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
     print(f"      football_model_df shape: {football_model_df.shape}")
 
     print("[3/7] Splitting Football and adding train-only team strength...")
-    football_train, football_val, football_test = split_football_with_team_strength(football_model_df)
+    football_train, football_val, football_test = split_football_with_team_strength(
+        football_model_df
+    )
 
     football_features = TIME_FEATURE_SETS["raw_plus_sincos"] + TEAM_STRENGTH_FEATURES
     print("[4/7] Building Football LSTM sequences...")
-    sequence_data, _ = build_sequence_data(football_train, football_val, football_test, football_features)
+    sequence_data, _ = build_sequence_data(
+        football_train, football_val, football_test, football_features
+    )
 
-    print("[5/7] Training Football LSTM models..." if not cfg.skip_lstm else "[5/7] Skipping Football LSTM models...")
+    print(
+        "[5/7] Training Football LSTM models..."
+        if not cfg.skip_lstm
+        else "[5/7] Skipping Football LSTM models..."
+    )
     football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
 
     print("[6/7] Saving Football analysis plots...")
     target_for_analysis = "home_scores_next_half"
-    corr = football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]].corr(numeric_only=True)[
+    corr = (
+        football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]]
+        .corr(numeric_only=True)[target_for_analysis]
+        .drop(target_for_analysis)
+    )
+    top_cols = corr.abs().sort_values(ascending=False).head(20).index.tolist() + [
         target_for_analysis
-    ].drop(target_for_analysis)
-    top_cols = corr.abs().sort_values(ascending=False).head(20).index.tolist() + [target_for_analysis]
+    ]
     save_correlation_heatmap(
         football_model_df,
         top_cols,
@@ -305,7 +335,9 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
     if not metrics_df.empty:
         best_name = metrics_df.iloc[0]["model"]
         y_best, p_best = prob_store[best_name]
-        confusion_frame(y_best, p_best).to_csv(cfg.metrics_dir / "football_best_confusion_matrix.csv")
+        confusion_frame(y_best, p_best).to_csv(
+            cfg.metrics_dir / "football_best_confusion_matrix.csv"
+        )
         calib = calibration_table(y_best, p_best)
         calib.to_csv(cfg.metrics_dir / "football_best_calibration.csv")
         if football_histories:

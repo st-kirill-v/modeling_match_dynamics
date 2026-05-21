@@ -95,7 +95,9 @@ def game_id_from_json(json_path: Path) -> str:
     return str(game.get("gameid", json_path.stem)).zfill(10)
 
 
-def build_dataset(max_games: int, moment_stride: int, output_dir: Path, output_csv: Path) -> pd.DataFrame:
+def build_dataset(
+    max_games: int, moment_stride: int, output_dir: Path, output_csv: Path
+) -> pd.DataFrame:
     archives_dir = output_dir / "archives"
     events_dir = output_dir / "events"
     shots_dir = output_dir / "shots"

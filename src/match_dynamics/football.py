@@ -47,9 +47,9 @@ def preprocess_football_events(df_events: pd.DataFrame) -> tuple[pd.DataFrame, p
     goal_text = football_events["text"].str.startswith("Goal!") | football_events[
         "text"
     ].str.startswith("Own Goal")
-    football_events["is_goal_fixed"] = (
-        (football_events["event_type"] == 1) & goal_text
-    ).astype(int)
+    football_events["is_goal_fixed"] = ((football_events["event_type"] == 1) & goal_text).astype(
+        int
+    )
     football_events["is_attempt"] = (football_events["event_type"] == 1).astype(int)
     football_events["is_corner"] = (football_events["event_type"] == 2).astype(int)
     football_events["is_foul"] = (football_events["event_type"] == 3).astype(int)
@@ -105,9 +105,7 @@ def preprocess_football_events(df_events: pd.DataFrame) -> tuple[pd.DataFrame, p
     )
 
     football_minute = make_minute_level(football_events, team_map)
-    football_model_df = football_minute.loc[
-        football_minute["time"] <= FOOTBALL_HALF_CUTOFF
-    ].copy()
+    football_model_df = football_minute.loc[football_minute["time"] <= FOOTBALL_HALF_CUTOFF].copy()
     return football_minute, football_model_df
 
 
@@ -225,12 +223,8 @@ def add_rolling_features(football_minute: pd.DataFrame) -> None:
         )
         football_minute[f"{col}_momentum_5min"] = last_5 - previous_5
 
-    football_minute["home_event_share_last_5min"] = football_minute[
-        "home_event_last_5min"
-    ] / (
-        football_minute["home_event_last_5min"]
-        + football_minute["away_event_last_5min"]
-        + 1e-6
+    football_minute["home_event_share_last_5min"] = football_minute["home_event_last_5min"] / (
+        football_minute["home_event_last_5min"] + football_minute["away_event_last_5min"] + 1e-6
     )
     football_minute["away_event_share_last_5min"] = (
         1 - football_minute["home_event_share_last_5min"]
@@ -242,10 +236,7 @@ def add_rolling_features(football_minute: pd.DataFrame) -> None:
         1.5
         * (football_minute["home_attempt_last_5min"] - football_minute["away_attempt_last_5min"])
         + 1.2
-        * (
-            football_minute["home_key_pass_last_5min"]
-            - football_minute["away_key_pass_last_5min"]
-        )
+        * (football_minute["home_key_pass_last_5min"] - football_minute["away_key_pass_last_5min"])
         + 0.8
         * (football_minute["home_corner_last_5min"] - football_minute["away_corner_last_5min"])
         + 2.0 * (football_minute["home_xg_last_5min"] - football_minute["away_xg_last_5min"])
@@ -273,10 +264,10 @@ def add_targets(football_minute: pd.DataFrame) -> None:
 
 
 def build_team_strength(train_df: pd.DataFrame) -> tuple[pd.DataFrame, float, float]:
-    match_level = train_df.sort_values(["match_id", "time"]).groupby("match_id", as_index=False).tail(1)
-    home = match_level[
-        ["home_team", "home_score", "away_score", "home_xg", "away_xg"]
-    ].rename(
+    match_level = (
+        train_df.sort_values(["match_id", "time"]).groupby("match_id", as_index=False).tail(1)
+    )
+    home = match_level[["home_team", "home_score", "away_score", "home_xg", "away_xg"]].rename(
         columns={
             "home_team": "team",
             "home_score": "goals_for",
@@ -285,9 +276,7 @@ def build_team_strength(train_df: pd.DataFrame) -> tuple[pd.DataFrame, float, fl
             "away_xg": "xg_against",
         }
     )
-    away = match_level[
-        ["away_team", "away_score", "home_score", "away_xg", "home_xg"]
-    ].rename(
+    away = match_level[["away_team", "away_score", "home_score", "away_xg", "home_xg"]].rename(
         columns={
             "away_team": "team",
             "away_score": "goals_for",

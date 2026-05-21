@@ -84,7 +84,9 @@ def save_calibration_curve(calib_plot: pd.DataFrame, title: str, output_path: Pa
     plt.close(fig)
 
 
-def save_correlation_heatmap(df: pd.DataFrame, cols: list[str], title: str, output_path: Path) -> None:
+def save_correlation_heatmap(
+    df: pd.DataFrame, cols: list[str], title: str, output_path: Path
+) -> None:
     fig = plt.figure(figsize=(14, 9))
     sns.heatmap(df[cols].corr(numeric_only=True), cmap="coolwarm", center=0)
     plt.title(title)
@@ -93,7 +95,9 @@ def save_correlation_heatmap(df: pd.DataFrame, cols: list[str], title: str, outp
     plt.close(fig)
 
 
-def save_feature_importance(importance: pd.DataFrame, title: str, output_path: Path, top_n: int = 25) -> None:
+def save_feature_importance(
+    importance: pd.DataFrame, title: str, output_path: Path, top_n: int = 25
+) -> None:
     fig = plt.figure(figsize=(10, 8))
     sns.barplot(data=importance.head(top_n), x="importance", y="feature")
     plt.title(title)
