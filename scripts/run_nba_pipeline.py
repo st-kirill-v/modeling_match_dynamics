@@ -57,10 +57,8 @@ def main() -> None:
     )
     result = run_nba_pipeline(cfg)
     print("NBA pipeline finished.")
-    print("Regression metrics saved to:", cfg.metrics_dir / "nba_final_score_regression_metrics.csv")
-    print("Classification metrics saved to:", cfg.metrics_dir / "nba_home_win_classification_metrics.csv")
-    print(result["regression_metrics"].head(20).to_string(index=False))
-    print(result["classification_metrics"].head(20).to_string(index=False))
+    print("LSTM metrics saved to:", cfg.metrics_dir / "nba_lstm_final_score_metrics.csv")
+    print(result["lstm_metrics"].head(20).to_string(index=False))
 
 
 if __name__ == "__main__":

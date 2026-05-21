@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-
 
 def build_lstm_binary(input_shape: tuple[int, int], name: str):
     import tensorflow as tf
@@ -65,26 +60,3 @@ def build_lstm_regression(input_shape: tuple[int, int], name: str):
         ],
     )
     return model
-
-
-def build_football_tabular_baseline() -> HistGradientBoostingClassifier:
-    return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.06, random_state=42)
-
-
-def build_nba_baselines() -> dict:
-    return {
-        "logreg": make_pipeline(
-            StandardScaler(),
-            LogisticRegression(max_iter=2000, class_weight="balanced"),
-        ),
-        "hist_gbdt": HistGradientBoostingClassifier(
-            max_iter=200, learning_rate=0.06, random_state=42
-        ),
-        "random_forest": RandomForestClassifier(
-            n_estimators=160,
-            max_depth=10,
-            class_weight="balanced",
-            random_state=42,
-            n_jobs=-1,
-        ),
-    }

@@ -6,18 +6,11 @@ import warnings
 import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from .config import (
     BASE_FOOTBALL_FEATURES,
     FOOTBALL_TARGETS,
-    NBA_MATCHED_FEATURES,
-    NBA_POSSESSION_FEATURES,
-    NBA_TARGET,
-    NBA_TARGETS,
     RANDOM_STATE,
     TEAM_STRENGTH_FEATURES,
     TIME_FEATURE_SETS,
@@ -39,12 +32,10 @@ from .football import (
     preprocess_football_events,
 )
 from .models import (
-    build_football_tabular_baseline,
     build_lstm_binary,
     build_lstm_regression,
-    build_nba_baselines,
 )
-from .nba import build_nba_final_score_checkpoint_dataset, nba_feature_importance
+from .nba import build_nba_final_score_checkpoint_dataset
 from .sequences import make_sequences, scale_split, split_match_ids
 from .visualization import (
     save_calibration_curve,
@@ -131,37 +122,9 @@ def train_football_lstm(
     return models, histories
 
 
-def train_football_tabular_baselines(
-    football_train: pd.DataFrame,
-) -> dict:
-    tabular_models = {}
-    for target in FOOTBALL_TARGETS:
-        tabular_models[target] = {}
-        for mode, cols in TIME_FEATURE_SETS.items():
-            cols = cols + TEAM_STRENGTH_FEATURES
-            model = build_football_tabular_baseline()
-            model.fit(football_train[cols], football_train[target].astype(int))
-            tabular_models[target][mode] = (model, cols)
-    return tabular_models
-
-
-def train_nba_baselines(nba_train: pd.DataFrame) -> dict:
-    nba_baselines = {}
-    for target in NBA_TARGETS:
-        nba_baselines[target] = {}
-        for name, model in build_nba_baselines().items():
-            model.fit(nba_train[NBA_MATCHED_FEATURES], nba_train[target].astype(int))
-            nba_baselines[target][name] = model
-    return nba_baselines
-
-
 def evaluate_all(
     football_models: dict,
-    tabular_models: dict,
     sequence_data: dict,
-    football_test: pd.DataFrame,
-    nba_baselines: dict | None = None,
-    nba_test: pd.DataFrame | None = None,
     cfg: ProjectConfig | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     main_window = cfg.main_window if cfg is not None else 20
@@ -174,20 +137,6 @@ def evaluate_all(
             name = f"LSTM_{target}_w{main_window}"
             metric_rows.append(evaluate_binary(y_test.astype(int), prob, name))
             prob_store[name] = (y_test.astype(int), prob)
-
-        for mode, (model, cols) in tabular_models[target].items():
-            prob = model.predict_proba(football_test[cols])[:, 1]
-            name = f"HGB_{mode}_{target}"
-            metric_rows.append(evaluate_binary(football_test[target].astype(int), prob, name))
-            prob_store[name] = (football_test[target].astype(int).to_numpy(), prob)
-
-    if nba_baselines and nba_test is not None and not nba_test.empty:
-        for target, models_by_name in nba_baselines.items():
-            for name, model in models_by_name.items():
-                prob = model.predict_proba(nba_test[NBA_MATCHED_FEATURES])[:, 1]
-                model_name = f"NBA_{name}_{target}"
-                metric_rows.append(evaluate_binary(nba_test[target].astype(int), prob, model_name))
-                prob_store[model_name] = (nba_test[target].astype(int).to_numpy(), prob)
 
     metrics_df = pd.DataFrame(metric_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     return metrics_df, prob_store
@@ -217,8 +166,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     print("[5/9] Training Football LSTM models..." if not cfg.skip_lstm else "[5/9] Skipping Football LSTM models...")
     football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
 
-    print("[6/9] Training Football tabular baselines...")
-    tabular_models = train_football_tabular_baselines(football_train)
+    print("[6/9] Football baselines skipped: active pipeline uses LSTM only.")
 
     print("[7/9] Saving Football correlation and feature-importance plots...")
     target_for_analysis = "home_scores_next_half"
@@ -243,34 +191,13 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     )
 
     nba_possession_df = pd.DataFrame()
-    nba_train = nba_test = pd.DataFrame()
-    nba_baselines = {}
     print("[8/9] Loading prepared NBA matched dataset...")
     nba_path = cfg.nba_matched_path or cfg.default_nba_matched_path
     if nba_path.exists():
         nba_possession_df = pd.read_csv(nba_path)
-        nba_possession_df = nba_possession_df.dropna(subset=NBA_MATCHED_FEATURES + NBA_TARGETS)
         print(f"      NBA matched dataset: {nba_path}")
         print(f"      shape: {nba_possession_df.shape}, games: {nba_possession_df['game_id'].nunique()}")
-        n_train_ids, _, n_test_ids = split_match_ids(nba_possession_df, match_col="game_id")
-        nba_train = nba_possession_df[nba_possession_df["game_id"].isin(n_train_ids)].copy()
-        nba_test = nba_possession_df[nba_possession_df["game_id"].isin(n_test_ids)].copy()
-        nba_baselines = train_nba_baselines(nba_train)
-        save_correlation_heatmap(
-            nba_possession_df,
-            NBA_MATCHED_FEATURES + [NBA_TARGET],
-            "NBA matched movement correlations with shot_made",
-            cfg.figures_dir / "nba_correlations.png",
-        )
-        nba_importance = nba_feature_importance(
-            nba_possession_df, NBA_MATCHED_FEATURES, NBA_TARGET
-        )
-        nba_importance.to_csv(cfg.metrics_dir / "nba_feature_importance.csv", index=False)
-        save_feature_importance(
-            nba_importance,
-            "NBA matched movement feature importance",
-            cfg.figures_dir / "nba_feature_importance.png",
-        )
+        print("      NBA baselines skipped: use scripts\\run_nba_pipeline.py for the NBA LSTM task.")
     else:
         print(f"      NBA skipped: prepared dataset not found at {nba_path}")
         print("      Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50")
@@ -278,11 +205,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     print("[9/9] Evaluating models and saving final plots/metrics...")
     metrics_df, prob_store = evaluate_all(
         football_models,
-        tabular_models,
         sequence_data,
-        football_test,
-        nba_baselines,
-        nba_test,
         cfg,
     )
     metrics_df.to_csv(cfg.metrics_dir / "metrics.csv", index=False)
@@ -350,8 +273,7 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
     print("[5/7] Training Football LSTM models..." if not cfg.skip_lstm else "[5/7] Skipping Football LSTM models...")
     football_models, football_histories = train_football_lstm(sequence_data, football_features, cfg)
 
-    print("[6/7] Training Football tabular baselines and plots...")
-    tabular_models = train_football_tabular_baselines(football_train)
+    print("[6/7] Saving Football analysis plots...")
     target_for_analysis = "home_scores_next_half"
     corr = football_model_df[BASE_FOOTBALL_FEATURES + [target_for_analysis]].corr(numeric_only=True)[
         target_for_analysis
@@ -376,9 +298,7 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
     print("[7/7] Evaluating Football models...")
     metrics_df, prob_store = evaluate_all(
         football_models,
-        tabular_models,
         sequence_data,
-        football_test,
         cfg=cfg,
     )
     metrics_df.to_csv(cfg.metrics_dir / "football_metrics.csv", index=False)
@@ -504,28 +424,6 @@ def build_nba_lstm_sequences(
     )
 
 
-def _nba_regressors() -> dict:
-    return {
-        "ridge": make_pipeline(StandardScaler(), Ridge(alpha=1.0)),
-        "hist_gbdt": HistGradientBoostingRegressor(max_iter=200, learning_rate=0.06, random_state=RANDOM_STATE),
-        "random_forest": RandomForestRegressor(n_estimators=200, max_depth=8, random_state=RANDOM_STATE, n_jobs=-1),
-    }
-
-
-def _nba_classifiers() -> dict:
-    return {
-        "logreg": make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, class_weight="balanced")),
-        "hist_gbdt": HistGradientBoostingClassifier(max_iter=200, learning_rate=0.06, random_state=RANDOM_STATE),
-        "random_forest": RandomForestClassifier(
-            n_estimators=200,
-            max_depth=8,
-            class_weight="balanced",
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
-        ),
-    }
-
-
 def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     warnings.filterwarnings("ignore", category=FutureWarning)
     warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -533,7 +431,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     cfg.ensure_dirs()
 
     nba_path = cfg.nba_matched_path or cfg.default_nba_matched_path
-    print("[1/6] Loading prepared NBA matched dataset...")
+    print("[1/4] Loading prepared NBA matched dataset...")
     if not nba_path.exists():
         raise FileNotFoundError(
             f"Prepared NBA matched dataset not found: {nba_path}. "
@@ -542,7 +440,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     matched = pd.read_csv(nba_path)
     print(f"      matched shape: {matched.shape}, games: {matched['game_id'].nunique()}")
 
-    print("[2/6] Building 5-minute final-score checkpoint dataset...")
+    print("[2/4] Building 5-minute final-score checkpoint dataset...")
     checkpoint_df = build_nba_final_score_checkpoint_dataset(matched, checkpoint_seconds=300.0)
     checkpoint_df = checkpoint_df.dropna(subset=NBA_FINAL_SCORE_FEATURES + ["home_win"])
     checkpoint_path = cfg.data_dir / "processed" / "nba_final_score_checkpoint_5min.csv"
@@ -554,33 +452,9 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     train_ids, _, test_ids = split_match_ids(checkpoint_df, match_col="game_id")
     train = checkpoint_df[checkpoint_df["game_id"].isin(train_ids)].copy()
     test = checkpoint_df[checkpoint_df["game_id"].isin(test_ids)].copy()
-    print(f"[3/6] Split by game_id: train={len(train)}, test={len(test)}")
+    print(f"[3/4] Split by game_id: train={len(train)}, test={len(test)}")
 
-    X_train, X_test = train[NBA_FINAL_SCORE_FEATURES], test[NBA_FINAL_SCORE_FEATURES]
-    reg_targets = ["final_home_score", "final_visitor_score", "final_score_diff_home", "score_diff_change_after_checkpoint"]
-
-    print("[4/6] Training NBA final-score tabular regressors...")
-    regression_rows = []
-    for target in reg_targets:
-        for name, model in _nba_regressors().items():
-            model.fit(X_train, train[target])
-            pred = model.predict(X_test)
-            regression_rows.append(evaluate_regression(test[target].to_numpy(), pred, f"NBA_{name}_{target}"))
-    regression_metrics = pd.DataFrame(regression_rows).sort_values(["mae", "rmse"])
-    regression_metrics.to_csv(cfg.metrics_dir / "nba_final_score_regression_metrics.csv", index=False)
-
-    print("[5/6] Training NBA winner classifier...")
-    classification_rows, prob_store = [], {}
-    for name, model in _nba_classifiers().items():
-        model.fit(X_train, train["home_win"].astype(int))
-        prob = model.predict_proba(X_test)[:, 1]
-        model_name = f"NBA_{name}_home_win_5min"
-        classification_rows.append(evaluate_binary(test["home_win"].astype(int), prob, model_name))
-        prob_store[model_name] = (test["home_win"].astype(int).to_numpy(), prob)
-    classification_metrics = pd.DataFrame(classification_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
-    classification_metrics.to_csv(cfg.metrics_dir / "nba_home_win_classification_metrics.csv", index=False)
-
-    print("[6/6] Training NBA LSTM on event sequences before 5-minute checkpoint...")
+    print("[4/4] Training NBA LSTM on event sequences before 5-minute checkpoint...")
     sequence_source = matched.dropna(subset=NBA_SEQUENCE_FEATURES)
     X_seq, y_seq, seq_game_ids = build_nba_lstm_sequences(
         sequence_source,
@@ -622,17 +496,13 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
         )
         lstm_metrics.to_csv(cfg.metrics_dir / "nba_lstm_final_score_metrics.csv", index=False)
 
-    print("\nNBA final-score regression metrics:")
-    print(regression_metrics.to_string(index=False))
-    print("\nNBA home-win classification metrics:")
-    print(classification_metrics.to_string(index=False))
     if not lstm_metrics.empty:
         print("\nNBA LSTM final-score-diff metrics:")
         print(lstm_metrics.to_string(index=False))
 
     return {
         "checkpoint_df": checkpoint_df,
-        "regression_metrics": regression_metrics,
-        "classification_metrics": classification_metrics,
+        "regression_metrics": lstm_metrics,
+        "classification_metrics": pd.DataFrame(),
         "lstm_metrics": lstm_metrics,
     }

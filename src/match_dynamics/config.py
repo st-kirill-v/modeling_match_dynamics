@@ -14,8 +14,6 @@ NBA_MAX_GAMES = 20
 NBA_MOMENT_STRIDE = 50
 
 FOOTBALL_TARGETS = ["home_scores_next_half", "away_scores_next_half"]
-NBA_TARGET = "shot_made"
-NBA_TARGETS = ["shot_attempt", "shot_made", "turnover", "foul", "scoring_event"]
 
 
 BASE_FOOTBALL_FEATURES = [
@@ -65,46 +63,6 @@ TEAM_STRENGTH_FEATURES = [
     "away_defense_strength",
     "team_attack_diff",
     "team_defense_diff",
-]
-
-NBA_POSSESSION_FEATURES = [
-    "period",
-    "possession_duration_proxy",
-    "avg_distance",
-    "std_distance",
-    "spread_x",
-    "spread_y",
-    "ball_x",
-    "ball_y",
-    "shot_clock_start",
-    "shot_clock_end",
-    "players_count",
-    "ball_hoop_dist",
-    "min_player_hoop_dist",
-    "players_near_hoop",
-    "low_shot_clock",
-    "intensity",
-]
-
-NBA_MATCHED_FEATURES = [
-    "period",
-    "movement_moments_total",
-    "movement_moments_sampled",
-    "game_clock_start",
-    "game_clock_end",
-    "shot_clock_start",
-    "shot_clock_end",
-    "avg_distance",
-    "std_distance",
-    "spread_x",
-    "spread_y",
-    "ball_x",
-    "ball_y",
-    "ball_hoop_dist",
-    "min_player_hoop_dist",
-    "players_near_hoop",
-    "low_shot_clock",
-    "intensity",
 ]
 
 TIME_FEATURE_SETS = {
