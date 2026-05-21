@@ -49,6 +49,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs. Lab default is 10.")
     parser.add_argument("--main-window", type=int, default=20, help="Main LSTM window in minutes.")
+    parser.add_argument(
+        "--compare-windows",
+        action="store_true",
+        help="Train and compare all configured Football LSTM windows.",
+    )
     parser.add_argument("--skip-lstm", action="store_true", help="Skip Football LSTM training.")
     return parser.parse_args()
 
@@ -61,6 +66,7 @@ def main() -> None:
         output_dir=args.output_dir,
         epochs=args.epochs,
         main_window=args.main_window,
+        compare_windows=args.compare_windows,
         skip_lstm=args.skip_lstm,
     )
     result = run_football_pipeline(cfg)

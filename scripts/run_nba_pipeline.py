@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Prepared NBA matched CSV. Default: data/processed/nba_matched_events_200.csv.",
     )
+    parser.add_argument(
+        "--compare-windows",
+        action="store_true",
+        help="Train and compare all configured NBA LSTM sequence windows.",
+    )
     return parser.parse_args()
 
 
@@ -56,6 +61,7 @@ def main() -> None:
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         nba_matched_path=args.nba_matched_path,
+        compare_windows=args.compare_windows,
     )
     result = run_nba_pipeline(cfg)
     print("NBA pipeline finished.")

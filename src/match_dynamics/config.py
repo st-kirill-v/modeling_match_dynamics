@@ -8,6 +8,7 @@ RANDOM_STATE = 42
 EPOCHS = 10
 TIME_STEPS = 10
 WINDOW_EXPERIMENTS = [10, 20, 30, 40]
+NBA_SEQUENCE_WINDOWS = [20, 40, 80]
 FOOTBALL_HALF_CUTOFF = 45
 NBA_MAX_ARCHIVES = 30
 NBA_MAX_GAMES = 200
@@ -89,6 +90,7 @@ class ProjectConfig:
     nba_matched_path: Path | None = None
     epochs: int = EPOCHS
     main_window: int = 20
+    compare_windows: bool = False
     skip_lstm: bool = False
     skip_nba_download: bool = False
 

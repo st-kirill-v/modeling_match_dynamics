@@ -11,6 +11,7 @@ from sklearn.preprocessing import StandardScaler
 from .config import (
     BASE_FOOTBALL_FEATURES,
     FOOTBALL_TARGETS,
+    NBA_SEQUENCE_WINDOWS,
     RANDOM_STATE,
     TEAM_STRENGTH_FEATURES,
     TIME_FEATURE_SETS,
@@ -105,39 +106,44 @@ def train_football_lstm(
     if cfg.skip_lstm:
         return models, histories
 
-    X_train, y_train_home = sequence_data[cfg.main_window][FOOTBALL_TARGETS[0]]["train"]
-    X_val, y_val_home = sequence_data[cfg.main_window][FOOTBALL_TARGETS[0]]["val"]
-    _, y_train_away = sequence_data[cfg.main_window][FOOTBALL_TARGETS[1]]["train"]
-    _, y_val_away = sequence_data[cfg.main_window][FOOTBALL_TARGETS[1]]["val"]
-    y_train = np.column_stack([y_train_home, y_train_away]).astype(int)
-    y_val = np.column_stack([y_val_home, y_val_away]).astype(int)
+    windows = WINDOW_EXPERIMENTS if cfg.compare_windows else [cfg.main_window]
+    for window in windows:
+        X_train, y_train_home = sequence_data[window][FOOTBALL_TARGETS[0]]["train"]
+        X_val, y_val_home = sequence_data[window][FOOTBALL_TARGETS[0]]["val"]
+        _, y_train_away = sequence_data[window][FOOTBALL_TARGETS[1]]["train"]
+        _, y_val_away = sequence_data[window][FOOTBALL_TARGETS[1]]["val"]
+        y_train = np.column_stack([y_train_home, y_train_away]).astype(int)
+        y_val = np.column_stack([y_val_home, y_val_away]).astype(int)
 
-    weights_by_target = [compute_weights(y_train[:, idx]) for idx in range(y_train.shape[1])]
-    sample_weight = np.mean(
-        [
-            np.array([weights_by_target[idx][int(value)] for value in y_train[:, idx]])
-            for idx in range(y_train.shape[1])
-        ],
-        axis=0,
-    )
+        weights_by_target = [compute_weights(y_train[:, idx]) for idx in range(y_train.shape[1])]
+        sample_weight = np.mean(
+            [
+                np.array([weights_by_target[idx][int(value)] for value in y_train[:, idx]])
+                for idx in range(y_train.shape[1])
+            ],
+            axis=0,
+        )
 
-    model = build_lstm_multilabel(
-        (cfg.main_window, len(feature_cols)),
-        len(FOOTBALL_TARGETS),
-        f"football_multilabel_w{cfg.main_window}",
-    )
-    history = model.fit(
-        X_train,
-        y_train,
-        epochs=cfg.epochs,
-        batch_size=128,
-        validation_data=(X_val, y_val),
-        sample_weight=sample_weight,
-        verbose=1,
-    )
-    models["football_multilabel"] = model
-    for target in FOOTBALL_TARGETS:
-        histories[target] = history
+        model = build_lstm_multilabel(
+            (window, len(feature_cols)),
+            len(FOOTBALL_TARGETS),
+            f"football_multilabel_w{window}",
+        )
+        print(f"      Training Football LSTM window={window}")
+        history = model.fit(
+            X_train,
+            y_train,
+            epochs=cfg.epochs,
+            batch_size=128,
+            validation_data=(X_val, y_val),
+            sample_weight=sample_weight,
+            verbose=1,
+        )
+        models[f"football_multilabel_w{window}"] = model
+        histories[f"football_multilabel_w{window}"] = history
+        if window == cfg.main_window:
+            for target in FOOTBALL_TARGETS:
+                histories[target] = history
     return models, histories
 
 
@@ -146,7 +152,6 @@ def evaluate_all(
     sequence_data: dict,
     cfg: ProjectConfig | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    main_window = cfg.main_window if cfg is not None else 20
     metric_rows, prob_store = [], {}
 
     def add_fixed_threshold_row(y_test: np.ndarray, prob: np.ndarray, name: str) -> None:
@@ -154,27 +159,34 @@ def evaluate_all(
         metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
         prob_store[name] = (y_test.astype(int), prob, threshold)
 
-    if "football_multilabel" in football_models:
-        X_val, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["val"]
-        X_test, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["test"]
-        val_probs = football_models["football_multilabel"].predict(X_val, verbose=0)
-        probs = football_models["football_multilabel"].predict(X_test, verbose=0)
-        for idx, target in enumerate(FOOTBALL_TARGETS):
-            _, y_val = sequence_data[main_window][target]["val"]
-            _, y_test = sequence_data[main_window][target]["test"]
-            val_prob = val_probs[:, idx]
-            prob = probs[:, idx]
-            name = f"LSTM_multilabel_{target}_w{main_window}"
-            add_fixed_threshold_row(y_test, prob, name)
+    multilabel_models = {
+        int(name.rsplit("_w", 1)[1]): model
+        for name, model in football_models.items()
+        if name.startswith("football_multilabel_w")
+    }
+    if multilabel_models:
+        for window, model in sorted(multilabel_models.items()):
+            X_val, _ = sequence_data[window][FOOTBALL_TARGETS[0]]["val"]
+            X_test, _ = sequence_data[window][FOOTBALL_TARGETS[0]]["test"]
+            val_probs = model.predict(X_val, verbose=0)
+            probs = model.predict(X_test, verbose=0)
+            for idx, target in enumerate(FOOTBALL_TARGETS):
+                _, y_val = sequence_data[window][target]["val"]
+                _, y_test = sequence_data[window][target]["test"]
+                val_prob = val_probs[:, idx]
+                prob = probs[:, idx]
+                name = f"LSTM_multilabel_{target}_w{window}"
+                add_fixed_threshold_row(y_test, prob, name)
 
-            calibrated_prob = calibrate_probabilities(
-                y_val.astype(int),
-                val_prob,
-                prob,
-            )
-            calibrated_name = f"{name}_calibrated"
-            add_fixed_threshold_row(y_test, calibrated_prob, calibrated_name)
+                calibrated_prob = calibrate_probabilities(
+                    y_val.astype(int),
+                    val_prob,
+                    prob,
+                )
+                calibrated_name = f"{name}_calibrated"
+                add_fixed_threshold_row(y_test, calibrated_prob, calibrated_name)
     else:
+        main_window = cfg.main_window if cfg is not None else 20
         for target in FOOTBALL_TARGETS:
             if target in football_models:
                 X_val, y_val = sequence_data[main_window][target]["val"]
@@ -579,31 +591,46 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
 
     print("[4/4] Training NBA LSTM on event sequences before 5-minute checkpoint...")
     sequence_source = prepare_nba_lstm_source(matched).dropna(subset=NBA_SEQUENCE_FEATURES)
-    X_seq, y_seq, seq_game_ids = build_nba_lstm_sequences(
-        sequence_source,
-        checkpoint_df,
-        NBA_SEQUENCE_FEATURES,
-        target_col="score_diff_change_after_checkpoint",
-        time_steps=40,
-    )
+    nba_windows = NBA_SEQUENCE_WINDOWS if cfg.compare_windows else [40]
     train_game_ids = set(train["game_id"])
     test_game_ids = set(test["game_id"])
-    train_mask = np.array([gid in train_game_ids for gid in seq_game_ids])
-    test_mask = np.array([gid in test_game_ids for gid in seq_game_ids])
-    X_train_seq, y_train_seq = X_seq[train_mask], y_seq[train_mask]
-    X_test_seq, y_test_seq = X_seq[test_mask], y_seq[test_mask]
 
-    lstm_metrics = pd.DataFrame()
-    if len(X_train_seq) > 0 and len(X_test_seq) > 0:
+    metric_rows = []
+    for time_steps in nba_windows:
+        print(f"      Training NBA LSTM time_steps={time_steps}")
+        X_seq, y_seq, seq_game_ids = build_nba_lstm_sequences(
+            sequence_source,
+            checkpoint_df,
+            NBA_SEQUENCE_FEATURES,
+            target_col="score_diff_change_after_checkpoint",
+            time_steps=time_steps,
+        )
+        train_mask = np.array([gid in train_game_ids for gid in seq_game_ids])
+        test_mask = np.array([gid in test_game_ids for gid in seq_game_ids])
+        X_train_seq, y_train_seq = X_seq[train_mask], y_seq[train_mask]
+        X_test_seq, y_test_seq = X_seq[test_mask], y_seq[test_mask]
+
+        if len(X_train_seq) == 0 or len(X_test_seq) == 0:
+            continue
+
         seq_scaler = StandardScaler()
         flat_train = X_train_seq.reshape(-1, X_train_seq.shape[-1])
         flat_test = X_test_seq.reshape(-1, X_test_seq.shape[-1])
         X_train_seq = seq_scaler.fit_transform(flat_train).reshape(X_train_seq.shape)
         X_test_seq = seq_scaler.transform(flat_test).reshape(X_test_seq.shape)
 
+        baseline_pred = np.full_like(y_test_seq, fill_value=float(y_train_seq.mean()))
+        metric_rows.append(
+            evaluate_regression(
+                y_test_seq,
+                baseline_pred,
+                f"NBA_mean_baseline_score_diff_change_5min_w{time_steps}",
+            )
+        )
+
         lstm = build_lstm_regression(
             (X_train_seq.shape[1], X_train_seq.shape[2]),
-            "nba_lstm_score_diff_change_5min",
+            f"nba_lstm_score_diff_change_5min_w{time_steps}",
         )
         import tensorflow as tf
 
@@ -623,17 +650,17 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
             verbose=1,
         )
         lstm_pred = lstm.predict(X_test_seq, verbose=0).ravel()
-        baseline_pred = np.full_like(y_test_seq, fill_value=float(y_train_seq.mean()))
-        lstm_metrics = pd.DataFrame(
-            [
-                evaluate_regression(
-                    y_test_seq,
-                    baseline_pred,
-                    "NBA_mean_baseline_score_diff_change_5min",
-                ),
-                evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_score_diff_change_5min"),
-            ]
+        metric_rows.append(
+            evaluate_regression(
+                y_test_seq,
+                lstm_pred,
+                f"NBA_LSTM_score_diff_change_5min_w{time_steps}",
+            )
         )
+
+    lstm_metrics = pd.DataFrame(metric_rows)
+    if not lstm_metrics.empty:
+        lstm_metrics = lstm_metrics.sort_values("mae")
         lstm_metrics.to_csv(cfg.metrics_dir / "nba_regression_metrics.csv", index=False)
         lstm_metrics.to_csv(cfg.metrics_dir / "nba_lstm_final_score_metrics.csv", index=False)
 
