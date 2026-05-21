@@ -39,6 +39,7 @@ def top_decile_lift(y_true: np.ndarray, prob: np.ndarray) -> float:
 
 def evaluate_binary(y_true: np.ndarray, prob: np.ndarray, name: str) -> dict:
     pred = (prob >= 0.5).astype(int)
+    mse = mean_squared_error(y_true, prob)
     return {
         "model": name,
         "accuracy": accuracy_score(y_true, pred),
@@ -49,6 +50,9 @@ def evaluate_binary(y_true: np.ndarray, prob: np.ndarray, name: str) -> dict:
         "roc_auc": roc_auc_score(y_true, prob) if len(np.unique(y_true)) > 1 else np.nan,
         "pr_auc": average_precision_score(y_true, prob) if len(np.unique(y_true)) > 1 else np.nan,
         "log_loss": log_loss(y_true, prob, labels=[0, 1]),
+        "mae": mean_absolute_error(y_true, prob),
+        "mse": mse,
+        "rmse": mse**0.5,
         "brier": brier_score_loss(y_true, prob),
         "top_decile_lift": top_decile_lift(y_true, prob),
     }
