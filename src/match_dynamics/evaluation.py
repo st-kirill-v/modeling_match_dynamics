@@ -61,30 +61,16 @@ def find_best_threshold(
     return best_threshold
 
 
-def threshold_candidates(y_val: np.ndarray, prob_val: np.ndarray) -> dict[str, float]:
-    return {
-        "fixed_0_5": 0.5,
-        "best_f1": find_best_threshold(y_val, prob_val, metric="f1"),
-        "best_balanced_accuracy": find_best_threshold(
-            y_val,
-            prob_val,
-            metric="balanced_accuracy",
-        ),
-    }
-
-
 def evaluate_binary(
     y_true: np.ndarray,
     prob: np.ndarray,
     name: str,
     threshold: float = 0.5,
-    threshold_mode: str = "fixed_0_5",
 ) -> dict:
     pred = (prob >= threshold).astype(int)
     mse = mean_squared_error(y_true, prob)
     return {
         "model": name,
-        "threshold_mode": threshold_mode,
         "threshold": threshold,
         "accuracy": accuracy_score(y_true, pred),
         "balanced_accuracy": balanced_accuracy_score(y_true, pred),

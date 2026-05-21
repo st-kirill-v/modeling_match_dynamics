@@ -25,7 +25,6 @@ from .evaluation import (
     confusion_frame,
     evaluate_binary,
     evaluate_regression,
-    threshold_candidates,
 )
 from .football import (
     add_team_strength,
@@ -150,32 +149,10 @@ def evaluate_all(
     main_window = cfg.main_window if cfg is not None else 20
     metric_rows, prob_store = [], {}
 
-    def add_binary_threshold_rows(
-        y_val: np.ndarray,
-        val_prob: np.ndarray,
-        y_test: np.ndarray,
-        prob: np.ndarray,
-        name: str,
-    ) -> None:
-        for threshold_mode, threshold in threshold_candidates(
-            y_val.astype(int),
-            val_prob,
-        ).items():
-            metric_name = f"{name}__thr_{threshold_mode}"
-            metric_rows.append(
-                evaluate_binary(
-                    y_test.astype(int),
-                    prob,
-                    metric_name,
-                    threshold,
-                    threshold_mode,
-                )
-            )
-            prob_store[metric_name] = (
-                y_test.astype(int),
-                prob,
-                threshold,
-            )
+    def add_fixed_threshold_row(y_test: np.ndarray, prob: np.ndarray, name: str) -> None:
+        threshold = 0.5
+        metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
+        prob_store[name] = (y_test.astype(int), prob, threshold)
 
     if "football_multilabel" in football_models:
         X_val, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["val"]
@@ -188,26 +165,15 @@ def evaluate_all(
             val_prob = val_probs[:, idx]
             prob = probs[:, idx]
             name = f"LSTM_multilabel_{target}_w{main_window}"
-            add_binary_threshold_rows(y_val, val_prob, y_test, prob, name)
+            add_fixed_threshold_row(y_test, prob, name)
 
-            calibrated_val_prob = calibrate_probabilities(
-                y_val.astype(int),
-                val_prob,
-                val_prob,
-            )
             calibrated_prob = calibrate_probabilities(
                 y_val.astype(int),
                 val_prob,
                 prob,
             )
             calibrated_name = f"{name}_calibrated"
-            add_binary_threshold_rows(
-                y_val,
-                calibrated_val_prob,
-                y_test,
-                calibrated_prob,
-                calibrated_name,
-            )
+            add_fixed_threshold_row(y_test, calibrated_prob, calibrated_name)
     else:
         for target in FOOTBALL_TARGETS:
             if target in football_models:
@@ -216,18 +182,11 @@ def evaluate_all(
                 val_prob = football_models[target].predict(X_val, verbose=0).ravel()
                 prob = football_models[target].predict(X_test, verbose=0).ravel()
                 name = f"LSTM_{target}_w{main_window}"
-                add_binary_threshold_rows(y_val, val_prob, y_test, prob, name)
+                add_fixed_threshold_row(y_test, prob, name)
 
-                calibrated_val_prob = calibrate_probabilities(y_val.astype(int), val_prob, val_prob)
                 calibrated_prob = calibrate_probabilities(y_val.astype(int), val_prob, prob)
                 calibrated_name = f"{name}_calibrated"
-                add_binary_threshold_rows(
-                    y_val,
-                    calibrated_val_prob,
-                    y_test,
-                    calibrated_prob,
-                    calibrated_name,
-                )
+                add_fixed_threshold_row(y_test, calibrated_prob, calibrated_name)
 
     metrics_df = pd.DataFrame(metric_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     return metrics_df, prob_store
@@ -319,9 +278,8 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
 
     best_name = metrics_df.iloc[0]["model"]
     y_best, p_best, best_threshold = prob_store[best_name]
-    confusion_frame(y_best, p_best, best_threshold).to_csv(
-        cfg.metrics_dir / "best_confusion_matrix.csv"
-    )
+    best_confusion_df = confusion_frame(y_best, p_best, best_threshold)
+    best_confusion_df.to_csv(cfg.metrics_dir / "best_confusion_matrix.csv")
     calib = calibration_table(y_best, p_best)
     calib.to_csv(cfg.metrics_dir / "best_calibration.csv")
 
@@ -356,6 +314,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
         "nba_possession_df": nba_possession_df,
         "metrics_df": metrics_df,
         "best_model": best_name,
+        "confusion_df": best_confusion_df,
     }
 
 
@@ -424,12 +383,12 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
         cfg=cfg,
     )
     metrics_df.to_csv(cfg.metrics_dir / "football_metrics.csv", index=False)
+    best_confusion_df = pd.DataFrame()
     if not metrics_df.empty:
         best_name = metrics_df.iloc[0]["model"]
         y_best, p_best, best_threshold = prob_store[best_name]
-        confusion_frame(y_best, p_best, best_threshold).to_csv(
-            cfg.metrics_dir / "football_best_confusion_matrix.csv"
-        )
+        best_confusion_df = confusion_frame(y_best, p_best, best_threshold)
+        best_confusion_df.to_csv(cfg.metrics_dir / "football_best_confusion_matrix.csv")
         calib = calibration_table(y_best, p_best)
         calib.to_csv(cfg.metrics_dir / "football_best_calibration.csv")
         if football_histories:
@@ -461,7 +420,11 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
             f"Calibration: {best_name}",
             cfg.figures_dir / "football_best_calibration_curve.png",
         )
-    return {"metrics_df": metrics_df, "football_model_df": football_model_df}
+    return {
+        "metrics_df": metrics_df,
+        "football_model_df": football_model_df,
+        "confusion_df": best_confusion_df,
+    }
 
 
 NBA_FINAL_SCORE_FEATURES = [
@@ -642,22 +605,40 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
             (X_train_seq.shape[1], X_train_seq.shape[2]),
             "nba_lstm_score_diff_change_5min",
         )
+        import tensorflow as tf
+
         lstm.fit(
             X_train_seq,
             y_train_seq,
             epochs=cfg.epochs,
             batch_size=8,
             validation_split=0.2,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_loss",
+                    patience=2,
+                    restore_best_weights=True,
+                )
+            ],
             verbose=1,
         )
         lstm_pred = lstm.predict(X_test_seq, verbose=0).ravel()
+        baseline_pred = np.full_like(y_test_seq, fill_value=float(y_train_seq.mean()))
         lstm_metrics = pd.DataFrame(
-            [evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_score_diff_change_5min")]
+            [
+                evaluate_regression(
+                    y_test_seq,
+                    baseline_pred,
+                    "NBA_mean_baseline_score_diff_change_5min",
+                ),
+                evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_score_diff_change_5min"),
+            ]
         )
+        lstm_metrics.to_csv(cfg.metrics_dir / "nba_regression_metrics.csv", index=False)
         lstm_metrics.to_csv(cfg.metrics_dir / "nba_lstm_final_score_metrics.csv", index=False)
 
     if not lstm_metrics.empty:
-        print("\nNBA LSTM score-diff-change metrics:")
+        print("\nNBA score-diff-change regression comparison:")
         print(lstm_metrics.to_string(index=False))
 
     return {

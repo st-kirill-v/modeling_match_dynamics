@@ -67,6 +67,10 @@ def main() -> None:
     print("Football pipeline finished.")
     print("Metrics saved to:", cfg.metrics_dir / "football_metrics.csv")
     print(result["metrics_df"].head(20).to_string(index=False))
+    confusion_df = result.get("confusion_df")
+    if confusion_df is not None:
+        print("\nBest Football confusion matrix:")
+        print(confusion_df.to_string())
 
 
 if __name__ == "__main__":

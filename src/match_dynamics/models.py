@@ -74,11 +74,11 @@ def build_lstm_regression(input_shape: tuple[int, int], name: str):
     model = Sequential(
         [
             Input(shape=input_shape),
-            LSTM(64, return_sequences=True, kernel_regularizer=l2(1e-4)),
-            Dropout(0.25),
-            LSTM(32, kernel_regularizer=l2(1e-4)),
-            Dropout(0.25),
-            Dense(16, activation="relu"),
+            LSTM(48, return_sequences=True, kernel_regularizer=l2(5e-4)),
+            Dropout(0.35),
+            LSTM(24, kernel_regularizer=l2(5e-4)),
+            Dropout(0.35),
+            Dense(16, activation="relu", kernel_regularizer=l2(5e-4)),
             Dense(1),
         ],
         name=name,

@@ -59,7 +59,7 @@ def main() -> None:
     )
     result = run_nba_pipeline(cfg)
     print("NBA pipeline finished.")
-    print("LSTM metrics saved to:", cfg.metrics_dir / "nba_lstm_final_score_metrics.csv")
+    print("Regression metrics saved to:", cfg.metrics_dir / "nba_regression_metrics.csv")
     print(result["lstm_metrics"].head(20).to_string(index=False))
 
 
