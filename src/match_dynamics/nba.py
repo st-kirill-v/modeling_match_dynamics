@@ -289,6 +289,17 @@ def build_nba_matched_dataset(
     matched["scoring_event"] = ((matched["shot_made"] == 1) | (matched["free_throw"] == 1)).astype(
         int
     )
+    home_event = matched["HOMEDESCRIPTION"].notna()
+    away_event = matched["VISITORDESCRIPTION"].notna()
+    for col in ["shot_attempt", "shot_made", "shot_missed", "free_throw", "turnover", "foul"]:
+        matched[f"home_{col}"] = (matched[col].eq(1) & home_event).astype(int)
+        matched[f"away_{col}"] = (matched[col].eq(1) & away_event).astype(int)
+    matched["home_scoring_event"] = (
+        matched["home_shot_made"].eq(1) | matched["home_free_throw"].eq(1)
+    ).astype(int)
+    matched["away_scoring_event"] = (
+        matched["away_shot_made"].eq(1) | matched["away_free_throw"].eq(1)
+    ).astype(int)
     return matched
 
 

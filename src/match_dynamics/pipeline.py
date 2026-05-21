@@ -19,11 +19,13 @@ from .config import (
 )
 from .data_loading import ensure_football_events
 from .evaluation import (
+    calibrate_probabilities,
     calibration_table,
     compute_weights,
     confusion_frame,
     evaluate_binary,
     evaluate_regression,
+    find_best_threshold,
 )
 from .football import (
     add_team_strength,
@@ -32,10 +34,10 @@ from .football import (
     preprocess_football_events,
 )
 from .models import (
-    build_lstm_binary,
+    build_lstm_multilabel,
     build_lstm_regression,
 )
-from .nba import build_nba_final_score_checkpoint_dataset
+from .nba import add_score_columns, build_nba_final_score_checkpoint_dataset
 from .sequences import make_sequences, scale_split, split_match_ids
 from .visualization import (
     save_calibration_curve,
@@ -104,22 +106,38 @@ def train_football_lstm(
     if cfg.skip_lstm:
         return models, histories
 
+    X_train, y_train_home = sequence_data[cfg.main_window][FOOTBALL_TARGETS[0]]["train"]
+    X_val, y_val_home = sequence_data[cfg.main_window][FOOTBALL_TARGETS[0]]["val"]
+    _, y_train_away = sequence_data[cfg.main_window][FOOTBALL_TARGETS[1]]["train"]
+    _, y_val_away = sequence_data[cfg.main_window][FOOTBALL_TARGETS[1]]["val"]
+    y_train = np.column_stack([y_train_home, y_train_away]).astype(int)
+    y_val = np.column_stack([y_val_home, y_val_away]).astype(int)
+
+    weights_by_target = [compute_weights(y_train[:, idx]) for idx in range(y_train.shape[1])]
+    sample_weight = np.mean(
+        [
+            np.array([weights_by_target[idx][int(value)] for value in y_train[:, idx]])
+            for idx in range(y_train.shape[1])
+        ],
+        axis=0,
+    )
+
+    model = build_lstm_multilabel(
+        (cfg.main_window, len(feature_cols)),
+        len(FOOTBALL_TARGETS),
+        f"football_multilabel_w{cfg.main_window}",
+    )
+    history = model.fit(
+        X_train,
+        y_train,
+        epochs=cfg.epochs,
+        batch_size=128,
+        validation_data=(X_val, y_val),
+        sample_weight=sample_weight,
+        verbose=1,
+    )
+    models["football_multilabel"] = model
     for target in FOOTBALL_TARGETS:
-        X_train, y_train = sequence_data[cfg.main_window][target]["train"]
-        X_val, y_val = sequence_data[cfg.main_window][target]["val"]
-        model = build_lstm_binary(
-            (cfg.main_window, len(feature_cols)), f"football_{target}_w{cfg.main_window}"
-        )
-        history = model.fit(
-            X_train,
-            y_train,
-            epochs=cfg.epochs,
-            batch_size=128,
-            validation_data=(X_val, y_val),
-            class_weight=compute_weights(y_train),
-            verbose=1,
-        )
-        models[target] = model
         histories[target] = history
     return models, histories
 
@@ -132,13 +150,75 @@ def evaluate_all(
     main_window = cfg.main_window if cfg is not None else 20
     metric_rows, prob_store = [], {}
 
-    for target in FOOTBALL_TARGETS:
-        if target in football_models:
-            X_test, y_test = sequence_data[main_window][target]["test"]
-            prob = football_models[target].predict(X_test, verbose=0).ravel()
-            name = f"LSTM_{target}_w{main_window}"
-            metric_rows.append(evaluate_binary(y_test.astype(int), prob, name))
+    if "football_multilabel" in football_models:
+        X_val, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["val"]
+        X_test, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["test"]
+        val_probs = football_models["football_multilabel"].predict(X_val, verbose=0)
+        probs = football_models["football_multilabel"].predict(X_test, verbose=0)
+        for idx, target in enumerate(FOOTBALL_TARGETS):
+            _, y_val = sequence_data[main_window][target]["val"]
+            _, y_test = sequence_data[main_window][target]["test"]
+            val_prob = val_probs[:, idx]
+            prob = probs[:, idx]
+            name = f"LSTM_multilabel_{target}_w{main_window}"
+            threshold = find_best_threshold(y_val.astype(int), val_prob, metric="f1")
+            metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
             prob_store[name] = (y_test.astype(int), prob)
+
+            calibrated_val_prob = calibrate_probabilities(
+                y_val.astype(int),
+                val_prob,
+                val_prob,
+            )
+            calibrated_prob = calibrate_probabilities(
+                y_val.astype(int),
+                val_prob,
+                prob,
+            )
+            calibrated_name = f"{name}_calibrated"
+            calibrated_threshold = find_best_threshold(
+                y_val.astype(int),
+                calibrated_val_prob,
+                metric="f1",
+            )
+            metric_rows.append(
+                evaluate_binary(
+                    y_test.astype(int),
+                    calibrated_prob,
+                    calibrated_name,
+                    calibrated_threshold,
+                )
+            )
+            prob_store[calibrated_name] = (y_test.astype(int), calibrated_prob)
+    else:
+        for target in FOOTBALL_TARGETS:
+            if target in football_models:
+                X_val, y_val = sequence_data[main_window][target]["val"]
+                X_test, y_test = sequence_data[main_window][target]["test"]
+                val_prob = football_models[target].predict(X_val, verbose=0).ravel()
+                prob = football_models[target].predict(X_test, verbose=0).ravel()
+                name = f"LSTM_{target}_w{main_window}"
+                threshold = find_best_threshold(y_val.astype(int), val_prob, metric="f1")
+                metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
+                prob_store[name] = (y_test.astype(int), prob)
+
+                calibrated_val_prob = calibrate_probabilities(y_val.astype(int), val_prob, val_prob)
+                calibrated_prob = calibrate_probabilities(y_val.astype(int), val_prob, prob)
+                calibrated_name = f"{name}_calibrated"
+                calibrated_threshold = find_best_threshold(
+                    y_val.astype(int),
+                    calibrated_val_prob,
+                    metric="f1",
+                )
+                metric_rows.append(
+                    evaluate_binary(
+                        y_test.astype(int),
+                        calibrated_prob,
+                        calibrated_name,
+                        calibrated_threshold,
+                    )
+                )
+                prob_store[calibrated_name] = (y_test.astype(int), calibrated_prob)
 
     metrics_df = pd.DataFrame(metric_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     return metrics_df, prob_store
@@ -399,6 +479,9 @@ NBA_SEQUENCE_FEATURES = [
     "game_clock_end",
     "shot_clock_start",
     "shot_clock_end",
+    "home_score_ffill",
+    "visitor_score_ffill",
+    "score_diff_home",
     "avg_distance",
     "std_distance",
     "spread_x",
@@ -416,14 +499,46 @@ NBA_SEQUENCE_FEATURES = [
     "free_throw",
     "turnover",
     "foul",
+    "home_shot_attempt",
+    "away_shot_attempt",
+    "home_shot_made",
+    "away_shot_made",
+    "home_turnover",
+    "away_turnover",
+    "home_foul",
+    "away_foul",
+    "home_scoring_event",
+    "away_scoring_event",
 ]
+
+
+def prepare_nba_lstm_source(matched: pd.DataFrame) -> pd.DataFrame:
+    out = add_score_columns(matched)
+    home_event = out["HOMEDESCRIPTION"].notna()
+    away_event = out["VISITORDESCRIPTION"].notna()
+    for col in ["shot_attempt", "shot_made", "shot_missed", "free_throw", "turnover", "foul"]:
+        home_col = f"home_{col}"
+        away_col = f"away_{col}"
+        if home_col not in out.columns:
+            out[home_col] = (out[col].eq(1) & home_event).astype(int)
+        if away_col not in out.columns:
+            out[away_col] = (out[col].eq(1) & away_event).astype(int)
+    if "home_scoring_event" not in out.columns:
+        out["home_scoring_event"] = (
+            out["home_shot_made"].eq(1) | out["home_free_throw"].eq(1)
+        ).astype(int)
+    if "away_scoring_event" not in out.columns:
+        out["away_scoring_event"] = (
+            out["away_shot_made"].eq(1) | out["away_free_throw"].eq(1)
+        ).astype(int)
+    return out
 
 
 def build_nba_lstm_sequences(
     matched_df: pd.DataFrame,
     checkpoint_df: pd.DataFrame,
     feature_cols: list[str],
-    target_col: str = "final_score_diff_home",
+    target_col: str = "score_diff_change_after_checkpoint",
     time_steps: int = 40,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     X, y, game_ids = [], [], []
@@ -487,12 +602,12 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     print(f"[3/4] Split by game_id: train={len(train)}, test={len(test)}")
 
     print("[4/4] Training NBA LSTM on event sequences before 5-minute checkpoint...")
-    sequence_source = matched.dropna(subset=NBA_SEQUENCE_FEATURES)
+    sequence_source = prepare_nba_lstm_source(matched).dropna(subset=NBA_SEQUENCE_FEATURES)
     X_seq, y_seq, seq_game_ids = build_nba_lstm_sequences(
         sequence_source,
         checkpoint_df,
         NBA_SEQUENCE_FEATURES,
-        target_col="final_score_diff_home",
+        target_col="score_diff_change_after_checkpoint",
         time_steps=40,
     )
     train_game_ids = set(train["game_id"])
@@ -512,7 +627,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
 
         lstm = build_lstm_regression(
             (X_train_seq.shape[1], X_train_seq.shape[2]),
-            "nba_lstm_final_score_diff_5min",
+            "nba_lstm_score_diff_change_5min",
         )
         lstm.fit(
             X_train_seq,
@@ -524,12 +639,12 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
         )
         lstm_pred = lstm.predict(X_test_seq, verbose=0).ravel()
         lstm_metrics = pd.DataFrame(
-            [evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_final_score_diff_home_5min")]
+            [evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_score_diff_change_5min")]
         )
         lstm_metrics.to_csv(cfg.metrics_dir / "nba_lstm_final_score_metrics.csv", index=False)
 
     if not lstm_metrics.empty:
-        print("\nNBA LSTM final-score-diff metrics:")
+        print("\nNBA LSTM score-diff-change metrics:")
         print(lstm_metrics.to_string(index=False))
 
     return {
