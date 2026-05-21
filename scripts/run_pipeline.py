@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Prepared NBA matched CSV. Default: data/processed/nba_matched_events_200.csv.",
     )
-    parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs. Lab default is 10.")
+    parser.add_argument("--epochs", type=int, default=100, help="LSTM epochs.")
     parser.add_argument("--main-window", type=int, default=10, help="Main LSTM window in minutes.")
     parser.add_argument("--skip-lstm", action="store_true", help="Skip Football LSTM training.")
     parser.add_argument(
