@@ -218,7 +218,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
         )
     else:
         print(f"      NBA skipped: prepared dataset not found at {nba_path}")
-        print("      Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50")
+        print("      Build it with: python scripts\\build_nba_matched_dataset.py --max-games 200")
 
     print("[9/9] Evaluating models and saving final plots/metrics...")
     metrics_df, prob_store = evaluate_all(
@@ -467,7 +467,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     if not nba_path.exists():
         raise FileNotFoundError(
             f"Prepared NBA matched dataset not found: {nba_path}. "
-            "Build it with: python scripts\\build_nba_matched_dataset.py --max-games 50"
+            "Build it with: python scripts\\build_nba_matched_dataset.py --max-games 200"
         )
     matched = pd.read_csv(nba_path)
     print(f"      matched shape: {matched.shape}, games: {matched['game_id'].nunique()}")

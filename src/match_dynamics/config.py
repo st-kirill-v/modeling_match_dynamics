@@ -10,7 +10,7 @@ TIME_STEPS = 10
 WINDOW_EXPERIMENTS = [10, 20, 30, 40]
 FOOTBALL_HALF_CUTOFF = 45
 NBA_MAX_ARCHIVES = 30
-NBA_MAX_GAMES = 20
+NBA_MAX_GAMES = 200
 NBA_MOMENT_STRIDE = 50
 
 FOOTBALL_TARGETS = ["home_scores_next_half", "away_scores_next_half"]
@@ -102,7 +102,7 @@ class ProjectConfig:
 
     @property
     def default_nba_matched_path(self) -> Path:
-        return self.data_dir / "processed" / "nba_matched_events_50.csv"
+        return self.data_dir / "processed" / "nba_matched_events_200.csv"
 
     @property
     def figures_dir(self) -> Path:

@@ -64,13 +64,13 @@ def download_file(relative_path: str, output_path: Path) -> None:
     print(f"           {output_path.stat().st_size / 1024 / 1024:.2f} MB")
 
 
-def list_archive_names(limit: int) -> list[str]:
+def list_archive_names(min_count: int) -> list[str]:
     with urllib.request.urlopen(API_DATA_URL, timeout=60) as response:
         payload = json.load(response)
     names = sorted(item["name"] for item in payload if item["name"].endswith(".7z"))
-    if len(names) < limit:
-        raise RuntimeError(f"Only {len(names)} archives were listed, requested {limit}.")
-    return names[:limit]
+    if len(names) < min_count:
+        raise RuntimeError(f"Only {len(names)} archives were listed, requested {min_count}.")
+    return names
 
 
 def extract_json_from_archive(archive_path: Path, extract_dir: Path) -> Path:
@@ -106,14 +106,23 @@ def build_dataset(
     archive_names = list_archive_names(max_games)
     json_files, game_ids = [], []
 
-    print(f"[1/6] Downloading {len(archive_names)} movement archives...")
+    print(f"[1/6] Downloading movement archives until {max_games} valid games are ready...")
     for name in archive_names:
+        if len(json_files) >= max_games:
+            break
         archive_path = archives_dir / name
-        download_file(name, archive_path)
-        json_path = extract_json_from_archive(archive_path, extracted_dir)
-        game_id = game_id_from_json(json_path)
+        try:
+            download_file(name, archive_path)
+            json_path = extract_json_from_archive(archive_path, extracted_dir)
+            game_id = game_id_from_json(json_path)
+        except Exception as exc:
+            print(f"[skip-bad] {name}: {exc}")
+            continue
         json_files.append(json_path)
         game_ids.append(game_id)
+
+    if len(json_files) < max_games:
+        raise RuntimeError(f"Only {len(json_files)} valid movement JSON files were prepared.")
 
     print("[2/6] Downloading matching play-by-play events...")
     for game_id in game_ids:
@@ -183,13 +192,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build matched NBA movement + events + shots dataset without cloning the full repo."
     )
-    parser.add_argument("--max-games", type=int, default=50)
+    parser.add_argument("--max-games", type=int, default=200)
     parser.add_argument("--moment-stride", type=int, default=50)
     parser.add_argument("--output-dir", type=Path, default=Path("data/nba_matched"))
     parser.add_argument(
         "--output-csv",
         type=Path,
-        default=Path("data/nba_matched/nba_matched_events_50.csv"),
+        default=Path("data/processed/nba_matched_events_200.csv"),
     )
     return parser.parse_args()
 

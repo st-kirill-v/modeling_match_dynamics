@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--nba-matched-path",
         type=Path,
         default=None,
-        help="Prepared NBA matched CSV. Default: data/processed/nba_matched_events_50.csv.",
+        help="Prepared NBA matched CSV. Default: data/processed/nba_matched_events_200.csv.",
     )
     return parser.parse_args()
 
