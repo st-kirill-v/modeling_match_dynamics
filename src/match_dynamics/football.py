@@ -170,9 +170,58 @@ def make_minute_level(football_events: pd.DataFrame, team_map: pd.DataFrame) -> 
         football_minute["sort_order_max"] - football_minute["sort_order_min"]
     ).clip(lower=0)
 
+    add_cumulative_context_features(football_minute)
     add_rolling_features(football_minute)
     add_targets(football_minute)
     return football_minute
+
+
+def _minutes_since_event(df: pd.DataFrame, event_col: str) -> pd.Series:
+    event_time = df["time"].where(df[event_col] > 0)
+    last_event_time = event_time.groupby(df["match_id"]).ffill()
+    return (df["time"] - last_event_time).fillna(df["time"]).clip(lower=0)
+
+
+def add_cumulative_context_features(football_minute: pd.DataFrame) -> None:
+    grouped = football_minute.groupby("match_id")
+    cumulative_specs = {
+        "home_cumulative_xg": "home_xg",
+        "away_cumulative_xg": "away_xg",
+        "home_cumulative_attempts": "home_attempt",
+        "away_cumulative_attempts": "away_attempt",
+        "home_cumulative_key_passes": "home_key_pass",
+        "away_cumulative_key_passes": "away_key_pass",
+        "home_cumulative_corners": "home_corner",
+        "away_cumulative_corners": "away_corner",
+    }
+    for new_col, source_col in cumulative_specs.items():
+        football_minute[new_col] = grouped[source_col].cumsum()
+
+    elapsed = football_minute["time"].clip(lower=1)
+    football_minute["cumulative_xg_diff"] = (
+        football_minute["home_cumulative_xg"] - football_minute["away_cumulative_xg"]
+    )
+    football_minute["cumulative_attempt_diff"] = (
+        football_minute["home_cumulative_attempts"] - football_minute["away_cumulative_attempts"]
+    )
+    football_minute["home_xg_rate"] = football_minute["home_cumulative_xg"] / elapsed
+    football_minute["away_xg_rate"] = football_minute["away_cumulative_xg"] / elapsed
+    football_minute["xg_rate_diff"] = (
+        football_minute["home_xg_rate"] - football_minute["away_xg_rate"]
+    )
+    football_minute["home_attempt_rate"] = football_minute["home_cumulative_attempts"] / elapsed
+    football_minute["away_attempt_rate"] = football_minute["away_cumulative_attempts"] / elapsed
+    football_minute["attempt_rate_diff"] = (
+        football_minute["home_attempt_rate"] - football_minute["away_attempt_rate"]
+    )
+
+    for prefix in ["home", "away"]:
+        football_minute[f"{prefix}_minutes_since_attempt"] = _minutes_since_event(
+            football_minute, f"{prefix}_attempt"
+        )
+        football_minute[f"{prefix}_minutes_since_key_pass"] = _minutes_since_event(
+            football_minute, f"{prefix}_key_pass"
+        )
 
 
 def add_rolling_features(football_minute: pd.DataFrame) -> None:
@@ -232,6 +281,56 @@ def add_rolling_features(football_minute: pd.DataFrame) -> None:
     football_minute["xg_diff_last_10min"] = (
         football_minute["home_xg_last_10min"] - football_minute["away_xg_last_10min"]
     )
+    for window in [5, 10]:
+        football_minute[f"home_attack_pressure_last_{window}min"] = (
+            1.5 * football_minute[f"home_attempt_last_{window}min"]
+            + 1.2 * football_minute[f"home_key_pass_last_{window}min"]
+            + 0.8 * football_minute[f"home_corner_last_{window}min"]
+            + 2.0 * football_minute[f"home_xg_last_{window}min"]
+        )
+        football_minute[f"away_attack_pressure_last_{window}min"] = (
+            1.5 * football_minute[f"away_attempt_last_{window}min"]
+            + 1.2 * football_minute[f"away_key_pass_last_{window}min"]
+            + 0.8 * football_minute[f"away_corner_last_{window}min"]
+            + 2.0 * football_minute[f"away_xg_last_{window}min"]
+        )
+        football_minute[f"attack_pressure_diff_last_{window}min"] = (
+            football_minute[f"home_attack_pressure_last_{window}min"]
+            - football_minute[f"away_attack_pressure_last_{window}min"]
+        )
+
+    attempts_total_10 = (
+        football_minute["home_attempt_last_10min"]
+        + football_minute["away_attempt_last_10min"]
+        + 1e-6
+    )
+    xg_total_10 = (
+        football_minute["home_xg_last_10min"] + football_minute["away_xg_last_10min"] + 1e-6
+    )
+    football_minute["home_attempt_share_last_10min"] = (
+        football_minute["home_attempt_last_10min"] / attempts_total_10
+    )
+    football_minute["away_attempt_share_last_10min"] = (
+        football_minute["away_attempt_last_10min"] / attempts_total_10
+    )
+    football_minute["home_xg_share_last_10min"] = (
+        football_minute["home_xg_last_10min"] / xg_total_10
+    )
+    football_minute["away_xg_share_last_10min"] = (
+        football_minute["away_xg_last_10min"] / xg_total_10
+    )
+    football_minute["home_xg_per_attempt_last_10min"] = football_minute["home_xg_last_10min"] / (
+        football_minute["home_attempt_last_10min"] + 1e-6
+    )
+    football_minute["away_xg_per_attempt_last_10min"] = football_minute["away_xg_last_10min"] / (
+        football_minute["away_attempt_last_10min"] + 1e-6
+    )
+    football_minute["home_key_pass_per_attempt_last_10min"] = football_minute[
+        "home_key_pass_last_10min"
+    ] / (football_minute["home_attempt_last_10min"] + 1e-6)
+    football_minute["away_key_pass_per_attempt_last_10min"] = football_minute[
+        "away_key_pass_last_10min"
+    ] / (football_minute["away_attempt_last_10min"] + 1e-6)
     football_minute["pressure_diff_last_5min"] = (
         1.5
         * (football_minute["home_attempt_last_5min"] - football_minute["away_attempt_last_5min"])
@@ -240,6 +339,9 @@ def add_rolling_features(football_minute: pd.DataFrame) -> None:
         + 0.8
         * (football_minute["home_corner_last_5min"] - football_minute["away_corner_last_5min"])
         + 2.0 * (football_minute["home_xg_last_5min"] - football_minute["away_xg_last_5min"])
+    )
+    football_minute["pressure_score_interaction"] = (
+        football_minute["pressure_diff_last_5min"] * football_minute["score_diff"]
     )
 
 

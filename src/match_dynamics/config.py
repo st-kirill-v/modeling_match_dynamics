@@ -9,6 +9,7 @@ EPOCHS = 10
 TIME_STEPS = 10
 WINDOW_EXPERIMENTS = [10, 20, 30, 40]
 NBA_SEQUENCE_WINDOWS = [20, 40, 80]
+NBA_MAIN_SEQUENCE_WINDOW = 80
 FOOTBALL_HALF_CUTOFF = 45
 NBA_MAX_ARCHIVES = 30
 NBA_MAX_GAMES = 200
@@ -41,6 +42,37 @@ BASE_FOOTBALL_FEATURES = [
     "away_xg_last_5min",
     "home_xg_last_10min",
     "away_xg_last_10min",
+    "home_attack_pressure_last_5min",
+    "away_attack_pressure_last_5min",
+    "home_attack_pressure_last_10min",
+    "away_attack_pressure_last_10min",
+    "attack_pressure_diff_last_5min",
+    "attack_pressure_diff_last_10min",
+    "home_attempt_share_last_10min",
+    "away_attempt_share_last_10min",
+    "home_xg_share_last_10min",
+    "away_xg_share_last_10min",
+    "home_xg_per_attempt_last_10min",
+    "away_xg_per_attempt_last_10min",
+    "home_key_pass_per_attempt_last_10min",
+    "away_key_pass_per_attempt_last_10min",
+    "home_cumulative_xg",
+    "away_cumulative_xg",
+    "cumulative_xg_diff",
+    "home_cumulative_attempts",
+    "away_cumulative_attempts",
+    "cumulative_attempt_diff",
+    "home_xg_rate",
+    "away_xg_rate",
+    "xg_rate_diff",
+    "home_attempt_rate",
+    "away_attempt_rate",
+    "attempt_rate_diff",
+    "home_minutes_since_attempt",
+    "away_minutes_since_attempt",
+    "home_minutes_since_key_pass",
+    "away_minutes_since_key_pass",
+    "pressure_score_interaction",
     "xg_diff_last_10min",
     "pressure_diff_last_5min",
     "event_activity_last_10min",
@@ -89,7 +121,7 @@ class ProjectConfig:
     nba_json_dir: Path | None = None
     nba_matched_path: Path | None = None
     epochs: int = EPOCHS
-    main_window: int = 20
+    main_window: int = 10
     compare_windows: bool = False
     skip_lstm: bool = False
     skip_nba_download: bool = False

@@ -11,6 +11,7 @@ from sklearn.preprocessing import StandardScaler
 from .config import (
     BASE_FOOTBALL_FEATURES,
     FOOTBALL_TARGETS,
+    NBA_MAIN_SEQUENCE_WINDOW,
     NBA_SEQUENCE_WINDOWS,
     RANDOM_STATE,
     TEAM_STRENGTH_FEATURES,
@@ -591,7 +592,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
 
     print("[4/4] Training NBA LSTM on event sequences before 5-minute checkpoint...")
     sequence_source = prepare_nba_lstm_source(matched).dropna(subset=NBA_SEQUENCE_FEATURES)
-    nba_windows = NBA_SEQUENCE_WINDOWS if cfg.compare_windows else [40]
+    nba_windows = NBA_SEQUENCE_WINDOWS if cfg.compare_windows else [NBA_MAIN_SEQUENCE_WINDOW]
     train_game_ids = set(train["game_id"])
     test_game_ids = set(test["game_id"])
 
