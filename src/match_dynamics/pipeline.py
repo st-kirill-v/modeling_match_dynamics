@@ -25,7 +25,7 @@ from .evaluation import (
     confusion_frame,
     evaluate_binary,
     evaluate_regression,
-    find_best_threshold,
+    threshold_candidates,
 )
 from .football import (
     add_team_strength,
@@ -150,6 +150,33 @@ def evaluate_all(
     main_window = cfg.main_window if cfg is not None else 20
     metric_rows, prob_store = [], {}
 
+    def add_binary_threshold_rows(
+        y_val: np.ndarray,
+        val_prob: np.ndarray,
+        y_test: np.ndarray,
+        prob: np.ndarray,
+        name: str,
+    ) -> None:
+        for threshold_mode, threshold in threshold_candidates(
+            y_val.astype(int),
+            val_prob,
+        ).items():
+            metric_name = f"{name}__thr_{threshold_mode}"
+            metric_rows.append(
+                evaluate_binary(
+                    y_test.astype(int),
+                    prob,
+                    metric_name,
+                    threshold,
+                    threshold_mode,
+                )
+            )
+            prob_store[metric_name] = (
+                y_test.astype(int),
+                prob,
+                threshold,
+            )
+
     if "football_multilabel" in football_models:
         X_val, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["val"]
         X_test, _ = sequence_data[main_window][FOOTBALL_TARGETS[0]]["test"]
@@ -161,9 +188,7 @@ def evaluate_all(
             val_prob = val_probs[:, idx]
             prob = probs[:, idx]
             name = f"LSTM_multilabel_{target}_w{main_window}"
-            threshold = find_best_threshold(y_val.astype(int), val_prob, metric="f1")
-            metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
-            prob_store[name] = (y_test.astype(int), prob)
+            add_binary_threshold_rows(y_val, val_prob, y_test, prob, name)
 
             calibrated_val_prob = calibrate_probabilities(
                 y_val.astype(int),
@@ -176,20 +201,13 @@ def evaluate_all(
                 prob,
             )
             calibrated_name = f"{name}_calibrated"
-            calibrated_threshold = find_best_threshold(
-                y_val.astype(int),
+            add_binary_threshold_rows(
+                y_val,
                 calibrated_val_prob,
-                metric="f1",
+                y_test,
+                calibrated_prob,
+                calibrated_name,
             )
-            metric_rows.append(
-                evaluate_binary(
-                    y_test.astype(int),
-                    calibrated_prob,
-                    calibrated_name,
-                    calibrated_threshold,
-                )
-            )
-            prob_store[calibrated_name] = (y_test.astype(int), calibrated_prob)
     else:
         for target in FOOTBALL_TARGETS:
             if target in football_models:
@@ -198,27 +216,18 @@ def evaluate_all(
                 val_prob = football_models[target].predict(X_val, verbose=0).ravel()
                 prob = football_models[target].predict(X_test, verbose=0).ravel()
                 name = f"LSTM_{target}_w{main_window}"
-                threshold = find_best_threshold(y_val.astype(int), val_prob, metric="f1")
-                metric_rows.append(evaluate_binary(y_test.astype(int), prob, name, threshold))
-                prob_store[name] = (y_test.astype(int), prob)
+                add_binary_threshold_rows(y_val, val_prob, y_test, prob, name)
 
                 calibrated_val_prob = calibrate_probabilities(y_val.astype(int), val_prob, val_prob)
                 calibrated_prob = calibrate_probabilities(y_val.astype(int), val_prob, prob)
                 calibrated_name = f"{name}_calibrated"
-                calibrated_threshold = find_best_threshold(
-                    y_val.astype(int),
+                add_binary_threshold_rows(
+                    y_val,
                     calibrated_val_prob,
-                    metric="f1",
+                    y_test,
+                    calibrated_prob,
+                    calibrated_name,
                 )
-                metric_rows.append(
-                    evaluate_binary(
-                        y_test.astype(int),
-                        calibrated_prob,
-                        calibrated_name,
-                        calibrated_threshold,
-                    )
-                )
-                prob_store[calibrated_name] = (y_test.astype(int), calibrated_prob)
 
     metrics_df = pd.DataFrame(metric_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     return metrics_df, prob_store
@@ -309,8 +318,10 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
     metrics_df.to_csv(cfg.metrics_dir / "metrics.csv", index=False)
 
     best_name = metrics_df.iloc[0]["model"]
-    y_best, p_best = prob_store[best_name]
-    confusion_frame(y_best, p_best).to_csv(cfg.metrics_dir / "best_confusion_matrix.csv")
+    y_best, p_best, best_threshold = prob_store[best_name]
+    confusion_frame(y_best, p_best, best_threshold).to_csv(
+        cfg.metrics_dir / "best_confusion_matrix.csv"
+    )
     calib = calibration_table(y_best, p_best)
     calib.to_csv(cfg.metrics_dir / "best_calibration.csv")
 
@@ -330,6 +341,7 @@ def run_pipeline(cfg: ProjectConfig) -> dict:
         p_best,
         f"Confusion matrix: {best_name}",
         cfg.figures_dir / "best_confusion_matrix.png",
+        best_threshold,
     )
     save_pr_curve(y_best, p_best, f"PR curve: {best_name}", cfg.figures_dir / "best_pr_curve.png")
     save_calibration_curve(
@@ -414,8 +426,8 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
     metrics_df.to_csv(cfg.metrics_dir / "football_metrics.csv", index=False)
     if not metrics_df.empty:
         best_name = metrics_df.iloc[0]["model"]
-        y_best, p_best = prob_store[best_name]
-        confusion_frame(y_best, p_best).to_csv(
+        y_best, p_best, best_threshold = prob_store[best_name]
+        confusion_frame(y_best, p_best, best_threshold).to_csv(
             cfg.metrics_dir / "football_best_confusion_matrix.csv"
         )
         calib = calibration_table(y_best, p_best)
@@ -436,6 +448,7 @@ def run_football_pipeline(cfg: ProjectConfig) -> dict:
             p_best,
             f"Confusion matrix: {best_name}",
             cfg.figures_dir / "football_best_confusion_matrix.png",
+            best_threshold,
         )
         save_pr_curve(
             y_best,

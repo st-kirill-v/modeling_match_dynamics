@@ -48,10 +48,16 @@ def save_football_error_curves(histories: dict, targets: list[str], output_path:
     plt.close(fig)
 
 
-def save_confusion_matrix(y_true, prob, title: str, output_path: Path) -> None:
+def save_confusion_matrix(
+    y_true,
+    prob,
+    title: str,
+    output_path: Path,
+    threshold: float = 0.5,
+) -> None:
     fig = plt.figure(figsize=(5, 4))
     sns.heatmap(
-        confusion_matrix(y_true, (prob >= 0.5).astype(int)),
+        confusion_matrix(y_true, (prob >= threshold).astype(int)),
         annot=True,
         fmt="d",
         cmap="Blues",
