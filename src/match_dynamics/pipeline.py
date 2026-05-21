@@ -38,7 +38,12 @@ from .football import (
     football_feature_importance,
     preprocess_football_events,
 )
-from .models import build_football_tabular_baseline, build_lstm_binary, build_nba_baselines
+from .models import (
+    build_football_tabular_baseline,
+    build_lstm_binary,
+    build_lstm_regression,
+    build_nba_baselines,
+)
 from .nba import build_nba_final_score_checkpoint_dataset, nba_feature_importance
 from .sequences import make_sequences, scale_split, split_match_ids
 from .visualization import (
@@ -436,6 +441,68 @@ NBA_FINAL_SCORE_FEATURES = [
     "spread_y_mean_before_checkpoint",
 ]
 
+NBA_SEQUENCE_FEATURES = [
+    "period",
+    "game_clock_start",
+    "game_clock_end",
+    "shot_clock_start",
+    "shot_clock_end",
+    "avg_distance",
+    "std_distance",
+    "spread_x",
+    "spread_y",
+    "ball_x",
+    "ball_y",
+    "ball_hoop_dist",
+    "min_player_hoop_dist",
+    "players_near_hoop",
+    "low_shot_clock",
+    "intensity",
+    "shot_attempt",
+    "shot_made",
+    "shot_missed",
+    "free_throw",
+    "turnover",
+    "foul",
+]
+
+
+def build_nba_lstm_sequences(
+    matched_df: pd.DataFrame,
+    checkpoint_df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str = "final_score_diff_home",
+    time_steps: int = 40,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    X, y, game_ids = [], [], []
+    matched = matched_df.sort_values(["game_id", "period", "event_id"]).copy()
+    checkpoint_lookup = checkpoint_df.set_index("game_id")
+    for game_id, group in matched.groupby("game_id"):
+        if game_id not in checkpoint_lookup.index:
+            continue
+        checkpoint = checkpoint_lookup.loc[game_id]
+        history = group[
+            (group["period"].lt(4))
+            | ((group["period"].eq(4)) & (group["event_id"].le(checkpoint["checkpoint_event_id"])))
+        ]
+        history = history.dropna(subset=feature_cols)
+        if history.empty:
+            continue
+        values = history[feature_cols].to_numpy(dtype=np.float32)
+        if len(values) >= time_steps:
+            seq = values[-time_steps:]
+        else:
+            pad = np.zeros((time_steps - len(values), len(feature_cols)), dtype=np.float32)
+            seq = np.vstack([pad, values])
+        X.append(seq)
+        y.append(float(checkpoint[target_col]))
+        game_ids.append(game_id)
+    return (
+        np.array(X, dtype=np.float32),
+        np.array(y, dtype=np.float32),
+        np.array(game_ids),
+    )
+
 
 def _nba_regressors() -> dict:
     return {
@@ -462,11 +529,11 @@ def _nba_classifiers() -> dict:
 def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     warnings.filterwarnings("ignore", category=FutureWarning)
     warnings.filterwarnings("ignore", category=ConvergenceWarning)
-    set_global_seed(include_tensorflow=False)
+    set_global_seed(include_tensorflow=True)
     cfg.ensure_dirs()
 
     nba_path = cfg.nba_matched_path or cfg.default_nba_matched_path
-    print("[1/5] Loading prepared NBA matched dataset...")
+    print("[1/6] Loading prepared NBA matched dataset...")
     if not nba_path.exists():
         raise FileNotFoundError(
             f"Prepared NBA matched dataset not found: {nba_path}. "
@@ -475,7 +542,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     matched = pd.read_csv(nba_path)
     print(f"      matched shape: {matched.shape}, games: {matched['game_id'].nunique()}")
 
-    print("[2/5] Building 5-minute final-score checkpoint dataset...")
+    print("[2/6] Building 5-minute final-score checkpoint dataset...")
     checkpoint_df = build_nba_final_score_checkpoint_dataset(matched, checkpoint_seconds=300.0)
     checkpoint_df = checkpoint_df.dropna(subset=NBA_FINAL_SCORE_FEATURES + ["home_win"])
     checkpoint_path = cfg.data_dir / "processed" / "nba_final_score_checkpoint_5min.csv"
@@ -487,12 +554,12 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     train_ids, _, test_ids = split_match_ids(checkpoint_df, match_col="game_id")
     train = checkpoint_df[checkpoint_df["game_id"].isin(train_ids)].copy()
     test = checkpoint_df[checkpoint_df["game_id"].isin(test_ids)].copy()
-    print(f"[3/5] Split by game_id: train={len(train)}, test={len(test)}")
+    print(f"[3/6] Split by game_id: train={len(train)}, test={len(test)}")
 
     X_train, X_test = train[NBA_FINAL_SCORE_FEATURES], test[NBA_FINAL_SCORE_FEATURES]
     reg_targets = ["final_home_score", "final_visitor_score", "final_score_diff_home", "score_diff_change_after_checkpoint"]
 
-    print("[4/5] Training NBA final-score regressors...")
+    print("[4/6] Training NBA final-score tabular regressors...")
     regression_rows = []
     for target in reg_targets:
         for name, model in _nba_regressors().items():
@@ -502,7 +569,7 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     regression_metrics = pd.DataFrame(regression_rows).sort_values(["mae", "rmse"])
     regression_metrics.to_csv(cfg.metrics_dir / "nba_final_score_regression_metrics.csv", index=False)
 
-    print("[5/5] Training NBA winner classifier...")
+    print("[5/6] Training NBA winner classifier...")
     classification_rows, prob_store = [], {}
     for name, model in _nba_classifiers().items():
         model.fit(X_train, train["home_win"].astype(int))
@@ -513,13 +580,59 @@ def run_nba_pipeline(cfg: ProjectConfig) -> dict:
     classification_metrics = pd.DataFrame(classification_rows).sort_values(["pr_auc", "roc_auc"], ascending=False)
     classification_metrics.to_csv(cfg.metrics_dir / "nba_home_win_classification_metrics.csv", index=False)
 
+    print("[6/6] Training NBA LSTM on event sequences before 5-minute checkpoint...")
+    sequence_source = matched.dropna(subset=NBA_SEQUENCE_FEATURES)
+    X_seq, y_seq, seq_game_ids = build_nba_lstm_sequences(
+        sequence_source,
+        checkpoint_df,
+        NBA_SEQUENCE_FEATURES,
+        target_col="final_score_diff_home",
+        time_steps=40,
+    )
+    train_game_ids = set(train["game_id"])
+    test_game_ids = set(test["game_id"])
+    train_mask = np.array([gid in train_game_ids for gid in seq_game_ids])
+    test_mask = np.array([gid in test_game_ids for gid in seq_game_ids])
+    X_train_seq, y_train_seq = X_seq[train_mask], y_seq[train_mask]
+    X_test_seq, y_test_seq = X_seq[test_mask], y_seq[test_mask]
+
+    lstm_metrics = pd.DataFrame()
+    if len(X_train_seq) > 0 and len(X_test_seq) > 0:
+        seq_scaler = StandardScaler()
+        flat_train = X_train_seq.reshape(-1, X_train_seq.shape[-1])
+        flat_test = X_test_seq.reshape(-1, X_test_seq.shape[-1])
+        X_train_seq = seq_scaler.fit_transform(flat_train).reshape(X_train_seq.shape)
+        X_test_seq = seq_scaler.transform(flat_test).reshape(X_test_seq.shape)
+
+        lstm = build_lstm_regression(
+            (X_train_seq.shape[1], X_train_seq.shape[2]),
+            "nba_lstm_final_score_diff_5min",
+        )
+        lstm.fit(
+            X_train_seq,
+            y_train_seq,
+            epochs=cfg.epochs,
+            batch_size=8,
+            validation_split=0.2,
+            verbose=1,
+        )
+        lstm_pred = lstm.predict(X_test_seq, verbose=0).ravel()
+        lstm_metrics = pd.DataFrame(
+            [evaluate_regression(y_test_seq, lstm_pred, "NBA_LSTM_final_score_diff_home_5min")]
+        )
+        lstm_metrics.to_csv(cfg.metrics_dir / "nba_lstm_final_score_metrics.csv", index=False)
+
     print("\nNBA final-score regression metrics:")
     print(regression_metrics.to_string(index=False))
     print("\nNBA home-win classification metrics:")
     print(classification_metrics.to_string(index=False))
+    if not lstm_metrics.empty:
+        print("\nNBA LSTM final-score-diff metrics:")
+        print(lstm_metrics.to_string(index=False))
 
     return {
         "checkpoint_df": checkpoint_df,
         "regression_metrics": regression_metrics,
         "classification_metrics": classification_metrics,
+        "lstm_metrics": lstm_metrics,
     }
