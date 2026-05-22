@@ -1,8 +1,31 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
 import warnings
 from pathlib import Path
+
+
+def _restart_inside_project_venv() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    venv_python = project_root / ".venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        return
+
+    current_python = Path(sys.executable).resolve()
+    target_python = venv_python.resolve()
+    if current_python == target_python:
+        return
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root / "src")
+    completed = subprocess.run([str(target_python), *sys.argv], env=env, check=False)
+    raise SystemExit(completed.returncode)
+
+
+_restart_inside_project_venv()
 
 import pandas as pd
 
