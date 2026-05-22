@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir", type=Path, default=Path("outputs"), help="Output directory."
     )
-    parser.add_argument("--epochs", type=int, default=100, help="LSTM epochs.")
+    parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs.")
     parser.add_argument("--main-window", type=int, default=10, help="Main LSTM window in minutes.")
     parser.add_argument(
         "--compare-windows",
