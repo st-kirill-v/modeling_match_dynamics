@@ -2,14 +2,29 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Audit data quality",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\audit_data_quality.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      }
+    },
+    {
       "name": "Run pipeline",
       "type": "python",
       "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\scripts\\run_pipeline.py",
       "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      },
       "args": [
-        "--football-path",
-        "D:\\Учеба\\Глубокое обучение (DL)\\Football Events.zip",
         "--skip-nba-download"
       ]
     },
@@ -17,14 +32,41 @@
       "name": "Run quick check",
       "type": "python",
       "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\scripts\\run_pipeline.py",
       "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      },
       "args": [
-        "--football-path",
-        "D:\\Учеба\\Глубокое обучение (DL)\\Football Events.zip",
         "--skip-lstm",
         "--skip-nba-download"
       ]
+    },
+    {
+      "name": "Run football pipeline",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\run_football_pipeline.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      }
+    },
+    {
+      "name": "Run NBA pipeline",
+      "type": "python",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\run_nba_pipeline.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      }
     }
   ]
 }
