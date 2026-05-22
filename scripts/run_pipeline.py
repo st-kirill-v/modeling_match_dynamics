@@ -74,13 +74,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Prepared NBA matched CSV. Default: data/processed/nba_matched_events_200.csv.",
     )
-    parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs.")
+    parser.add_argument("--epochs", type=int, default=25, help="LSTM epochs.")
     parser.add_argument("--main-window", type=int, default=10, help="Main LSTM window in minutes.")
     parser.add_argument("--skip-lstm", action="store_true", help="Skip Football LSTM training.")
     parser.add_argument(
         "--skip-nba-download",
         action="store_true",
         help="Legacy option. Main pipeline now uses prepared NBA matched CSV and does not download NBA.",
+    )
+    parser.add_argument(
+        "--feature-selection",
+        action="store_true",
+        help="Train Football all/top20/top30/top40 feature-set comparison.",
     )
     return parser.parse_args()
 
@@ -97,6 +102,7 @@ def main() -> None:
         nba_matched_path=args.nba_matched_path,
         epochs=args.epochs,
         main_window=args.main_window,
+        feature_selection=args.feature_selection,
         skip_lstm=args.skip_lstm,
         skip_nba_download=args.skip_nba_download,
     )

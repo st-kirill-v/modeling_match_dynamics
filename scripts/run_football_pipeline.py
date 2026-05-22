@@ -47,12 +47,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir", type=Path, default=Path("outputs"), help="Output directory."
     )
-    parser.add_argument("--epochs", type=int, default=10, help="LSTM epochs.")
+    parser.add_argument("--epochs", type=int, default=25, help="LSTM epochs.")
     parser.add_argument("--main-window", type=int, default=10, help="Main LSTM window in minutes.")
     parser.add_argument(
         "--compare-windows",
         action="store_true",
         help="Train and compare all configured Football LSTM windows.",
+    )
+    parser.add_argument(
+        "--feature-selection",
+        action="store_true",
+        help="Train Football all/top20/top30/top40 feature-set comparison.",
     )
     parser.add_argument("--skip-lstm", action="store_true", help="Skip Football LSTM training.")
     return parser.parse_args()
@@ -67,6 +72,7 @@ def main() -> None:
         epochs=args.epochs,
         main_window=args.main_window,
         compare_windows=args.compare_windows,
+        feature_selection=args.feature_selection,
         skip_lstm=args.skip_lstm,
     )
     result = run_football_pipeline(cfg)

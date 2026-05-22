@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 RANDOM_STATE = 42
-EPOCHS = 10
+EPOCHS = 25
 TIME_STEPS = 10
 WINDOW_EXPERIMENTS = [10, 20, 30, 40]
 NBA_SEQUENCE_WINDOWS = [20, 40, 80]
@@ -123,6 +123,7 @@ class ProjectConfig:
     epochs: int = EPOCHS
     main_window: int = 10
     compare_windows: bool = False
+    feature_selection: bool = False
     skip_lstm: bool = False
     skip_nba_download: bool = False
 
@@ -146,6 +147,16 @@ class ProjectConfig:
     def metrics_dir(self) -> Path:
         return self.output_dir / "metrics"
 
+    @property
+    def models_dir(self) -> Path:
+        return self.output_dir / "models"
+
     def ensure_dirs(self) -> None:
-        for path in [self.data_dir, self.output_dir, self.figures_dir, self.metrics_dir]:
+        for path in [
+            self.data_dir,
+            self.output_dir,
+            self.figures_dir,
+            self.metrics_dir,
+            self.models_dir,
+        ]:
             path.mkdir(parents=True, exist_ok=True)
