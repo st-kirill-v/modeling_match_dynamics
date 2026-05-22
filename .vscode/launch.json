@@ -14,6 +14,22 @@
       }
     },
     {
+      "name": "Run data audit UI",
+      "type": "python",
+      "request": "launch",
+      "module": "streamlit",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+      },
+      "args": [
+        "run",
+        "${workspaceFolder}\\scripts\\run_data_audit_ui.py"
+      ]
+    },
+    {
       "name": "Run pipeline",
       "type": "python",
       "request": "launch",

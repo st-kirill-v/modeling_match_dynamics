@@ -1,0 +1,461 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+AUDIT_DIR = PROJECT_ROOT / "outputs" / "audits" / "data_quality"
+METRICS_DIR = PROJECT_ROOT / "outputs" / "metrics"
+
+
+def csv_path(name: str) -> Path:
+    return AUDIT_DIR / name
+
+
+@st.cache_data(show_spinner=False)
+def read_csv(path: str) -> pd.DataFrame:
+    fpath = Path(path)
+    if not fpath.exists():
+        return pd.DataFrame()
+    return pd.read_csv(fpath)
+
+
+def load_table(name: str) -> pd.DataFrame:
+    return read_csv(str(csv_path(name)))
+
+
+def load_metric_table(name: str) -> pd.DataFrame:
+    return read_csv(str(METRICS_DIR / name))
+
+
+def show_missing_bar(profile: pd.DataFrame, title: str, limit: int = 30) -> None:
+    if profile.empty or "missing_rate" not in profile.columns:
+        st.info("Нет данных для графика пропусков.")
+        return
+    plot_df = (
+        profile.sort_values("missing_rate", ascending=False)
+        .head(limit)
+        .sort_values("missing_rate", ascending=True)
+    )
+    fig = px.bar(
+        plot_df,
+        x="missing_rate",
+        y="column",
+        orientation="h",
+        title=title,
+        hover_data=[c for c in ["missing", "non_null", "dtype", "n_unique"] if c in plot_df],
+    )
+    fig.update_layout(height=max(420, 24 * len(plot_df)), xaxis_tickformat=".0%")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_dtype_bar(profile: pd.DataFrame, title: str) -> None:
+    if profile.empty or "dtype" not in profile.columns:
+        return
+    counts = profile["dtype"].value_counts().reset_index()
+    counts.columns = ["dtype", "columns"]
+    fig = px.bar(counts, x="dtype", y="columns", title=title, text="columns")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_profile_table(profile: pd.DataFrame) -> None:
+    if profile.empty:
+        st.warning("Таблица не найдена. Сначала запусти аудит данных.")
+        return
+    search = st.text_input("Фильтр по названию колонки", "")
+    view = profile
+    if search:
+        view = view[view["column"].astype(str).str.contains(search, case=False, na=False)]
+    st.dataframe(view, use_container_width=True, height=420)
+
+
+def show_head_table(name: str, title: str) -> None:
+    df = load_table(name)
+    st.subheader(title)
+    if df.empty:
+        st.warning(f"Файл {name} не найден.")
+        return
+    st.dataframe(df, use_container_width=True, height=360)
+
+
+def show_overview() -> None:
+    st.header("Overview")
+    overview = load_table("dataset_overview.csv")
+    if overview.empty:
+        st.warning("Аудит еще не сгенерирован. Нажми кнопку обновления в sidebar.")
+        return
+
+    cols = st.columns(4)
+    cols[0].metric("Datasets", len(overview))
+    cols[1].metric("Total rows", f"{int(overview['rows'].sum()):,}".replace(",", " "))
+    cols[2].metric("Total columns", int(overview["columns"].sum()))
+    cols[3].metric("Avg missing rate", f"{overview['missing_cell_rate'].mean():.1%}")
+
+    st.dataframe(overview, use_container_width=True)
+
+    fig = px.bar(
+        overview.sort_values("missing_cell_rate"),
+        x="missing_cell_rate",
+        y="dataset",
+        orientation="h",
+        title="Missing Cell Rate By Dataset",
+        text=overview.sort_values("missing_cell_rate")["missing_cell_rate"].map(
+            lambda x: f"{x:.1%}"
+        ),
+    )
+    fig.update_layout(height=430, xaxis_tickformat=".0%")
+    st.plotly_chart(fig, use_container_width=True)
+
+    size_df = overview.melt(
+        id_vars="dataset",
+        value_vars=["rows", "columns"],
+        var_name="metric",
+        value_name="value",
+    )
+    fig = px.bar(
+        size_df, x="dataset", y="value", color="metric", barmode="group", title="Rows / Columns"
+    )
+    fig.update_layout(xaxis_tickangle=-25)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_football_raw() -> None:
+    st.header("Football Raw")
+    profile = load_table("football_raw_events_columns.csv")
+    show_head_table("football_raw_events_head.csv", "Raw events head()")
+    show_missing_bar(profile, "Football Raw: Top Missing Columns")
+    show_dtype_bar(profile, "Football Raw: Column Types")
+    st.subheader("Column profile")
+    show_profile_table(profile)
+
+
+def show_football_processed() -> None:
+    st.header("Football Processed")
+    level = st.radio(
+        "Processed table",
+        ["minute_level_processed", "first_half_model_df"],
+        horizontal=True,
+    )
+    prefix = f"football_{level}"
+    show_head_table(f"{prefix}_head.csv", f"{level} head()")
+    profile = load_table(f"{prefix}_columns.csv")
+    show_missing_bar(profile, f"Football {level}: Top Missing Columns")
+    show_dtype_bar(profile, f"Football {level}: Column Types")
+
+    changes = load_table("football_processing_changes.csv")
+    st.subheader("Processing changes")
+    st.dataframe(changes, use_container_width=True, height=260)
+
+    head = load_table(f"{prefix}_head.csv")
+    target_cols = [
+        c for c in ["home_scores_next_half", "away_scores_next_half"] if c in head.columns
+    ]
+    if target_cols:
+        target_rows = []
+        for col in target_cols:
+            counts = head[col].value_counts(dropna=False).reset_index()
+            counts.columns = ["value", "count"]
+            counts["target"] = col
+            target_rows.append(counts)
+        target_df = pd.concat(target_rows, ignore_index=True)
+        fig = px.bar(
+            target_df,
+            x="value",
+            y="count",
+            color="target",
+            barmode="group",
+            title="Target Values In Saved head()",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Column profile")
+    show_profile_table(profile)
+
+
+def show_nba_raw() -> None:
+    st.header("NBA Raw")
+    inventory = load_table("nba_raw_file_inventory.csv")
+    movement = load_table("nba_raw_movement_json_sample.csv")
+
+    st.subheader("Raw file inventory")
+    st.dataframe(inventory, use_container_width=True)
+    if not inventory.empty:
+        fig = px.bar(
+            inventory, x="source", y="files", title="NBA Raw Files By Source", text="files"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        fig = px.bar(
+            inventory,
+            x="source",
+            y="total_size_mb",
+            title="NBA Raw Size By Source, MB",
+            text="total_size_mb",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Movement JSON sample")
+    st.dataframe(movement, use_container_width=True)
+
+    raw_kind = st.radio("Raw table", ["events", "shots"], horizontal=True)
+    if raw_kind == "events":
+        show_head_table("nba_raw_events_sample_head.csv", "NBA raw events head()")
+        profile = load_table("nba_raw_events_sample_columns.csv")
+        show_missing_bar(profile, "NBA Raw Events: Top Missing Columns")
+    else:
+        show_head_table("nba_raw_shots_sample_head.csv", "NBA raw shots head()")
+        profile = load_table("nba_raw_shots_sample_columns.csv")
+        show_missing_bar(profile, "NBA Raw Shots: Top Missing Columns")
+    show_dtype_bar(profile, f"NBA Raw {raw_kind}: Column Types")
+    st.subheader("Column profile")
+    show_profile_table(profile)
+
+
+def show_nba_processed() -> None:
+    st.header("NBA Processed")
+    table = st.radio(
+        "Processed table", ["matched_processed", "final_score_checkpoint_5min"], horizontal=True
+    )
+    if table == "matched_processed":
+        show_head_table("nba_matched_processed_head.csv", "NBA matched dataset head()")
+        profile = load_table("nba_matched_processed_columns.csv")
+        show_missing_bar(profile, "NBA Matched: Top Missing Columns")
+    else:
+        show_head_table("nba_final_score_checkpoint_5min_head.csv", "NBA checkpoint dataset head()")
+        profile = load_table("nba_final_score_checkpoint_5min_columns.csv")
+        show_missing_bar(profile, "NBA Checkpoint: Top Missing Columns")
+
+    show_dtype_bar(profile, f"NBA {table}: Column Types")
+
+    numeric_options = profile.loc[
+        profile["dtype"].astype(str).str.contains("int|float", case=False, regex=True), "column"
+    ].tolist()
+    if numeric_options:
+        selected = st.selectbox("Numeric column distribution", numeric_options)
+        head_file = (
+            "nba_matched_processed_head.csv"
+            if table == "matched_processed"
+            else "nba_final_score_checkpoint_5min_head.csv"
+        )
+        sample = load_table(head_file)
+        if selected in sample.columns:
+            fig = px.histogram(
+                sample, x=selected, title=f"Distribution in saved sample: {selected}"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Column profile")
+    show_profile_table(profile)
+
+
+def show_join_quality() -> None:
+    st.header("NBA Join Quality")
+    join = load_table("nba_join_quality.csv")
+    if join.empty:
+        st.warning("nba_join_quality.csv не найден.")
+        return
+    st.dataframe(join, use_container_width=True)
+    fig = px.bar(
+        join.sort_values("available_rate"),
+        x="available_rate",
+        y="check",
+        orientation="h",
+        title="NBA Join / Availability Rate",
+        text=join.sort_values("available_rate")["available_rate"].map(lambda x: f"{x:.1%}"),
+        hover_data=["column", "available_rows", "missing_rows"],
+    )
+    fig.update_layout(height=440, xaxis_tickformat=".0%")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_feature_engineering() -> None:
+    st.header("Feature Engineering")
+    football_report = load_metric_table("football_feature_report.csv")
+    nba_sequence = load_metric_table("nba_sequence_feature_report.csv")
+    nba_checkpoint = load_metric_table("nba_checkpoint_feature_report.csv")
+
+    dataset = st.radio(
+        "Feature report", ["Football", "NBA sequence", "NBA checkpoint"], horizontal=True
+    )
+    if dataset == "Football":
+        report = football_report
+        importance_col = "mean_rf_importance"
+        corr_col = "max_abs_corr"
+    elif dataset == "NBA sequence":
+        report = nba_sequence
+        importance_col = "rf_importance"
+        corr_col = "abs_corr_target"
+    else:
+        report = nba_checkpoint
+        importance_col = "rf_importance"
+        corr_col = "abs_corr_target"
+
+    if report.empty:
+        st.warning(
+            "Feature report не найден. Запусти pipeline/feature-selection, чтобы его создать."
+        )
+        return
+
+    st.dataframe(report, use_container_width=True, height=420)
+
+    top_n = st.slider("Top N features", 5, min(50, len(report)), min(25, len(report)))
+    top = (
+        report.sort_values(importance_col, ascending=False).head(top_n).sort_values(importance_col)
+    )
+    fig = px.bar(
+        top, x=importance_col, y="feature", orientation="h", title=f"{dataset}: Feature Importance"
+    )
+    fig.update_layout(height=max(420, 24 * len(top)))
+    st.plotly_chart(fig, use_container_width=True)
+
+    if corr_col in report.columns:
+        corr_top = report.sort_values(corr_col, ascending=False).head(top_n).sort_values(corr_col)
+        fig = px.bar(
+            corr_top,
+            x=corr_col,
+            y="feature",
+            orientation="h",
+            title=f"{dataset}: Absolute Correlation",
+        )
+        fig.update_layout(height=max(420, 24 * len(corr_top)))
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def show_correlations() -> None:
+    st.header("Correlations")
+    football = load_metric_table("football_feature_report.csv")
+    nba = load_metric_table("nba_sequence_feature_report.csv")
+
+    dataset = st.radio("Correlation table", ["Football", "NBA sequence"], horizontal=True)
+    report = football if dataset == "Football" else nba
+    if report.empty:
+        st.warning("Correlation report не найден.")
+        return
+
+    corr_cols = [c for c in report.columns if "corr" in c]
+    if not corr_cols:
+        st.info("В этом отчете нет correlation columns.")
+        return
+
+    top_n = st.slider("Top correlated features", 10, min(60, len(report)), min(30, len(report)))
+    sort_col = st.selectbox("Sort by", corr_cols)
+    view = report.sort_values(sort_col, key=lambda s: s.abs(), ascending=False).head(top_n)
+    st.dataframe(view[["feature", *corr_cols]], use_container_width=True, height=420)
+
+    heat = view.set_index("feature")[corr_cols]
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=heat.values,
+            x=heat.columns,
+            y=heat.index,
+            colorscale="RdBu",
+            zmid=0,
+        )
+    )
+    fig.update_layout(title=f"{dataset}: Correlation Heatmap", height=max(500, 24 * len(heat)))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def show_model_metrics() -> None:
+    st.header("Model Metrics")
+    football = load_metric_table("football_feature_selection_metrics.csv")
+    nba = load_metric_table("nba_regression_metrics.csv")
+
+    if not football.empty:
+        st.subheader("Football feature-selection metrics")
+        st.dataframe(football, use_container_width=True, height=360)
+        metric = st.selectbox(
+            "Football metric",
+            [c for c in ["pr_auc", "roc_auc", "f1", "mae", "mse", "brier"] if c in football],
+        )
+        fig = px.bar(
+            football.sort_values(metric, ascending=False),
+            x=metric,
+            y="model",
+            color="feature_set" if "feature_set" in football else None,
+            orientation="h",
+            title=f"Football models by {metric}",
+        )
+        fig.update_layout(height=max(520, 24 * len(football)))
+        st.plotly_chart(fig, use_container_width=True)
+
+    if not nba.empty:
+        st.subheader("NBA regression metrics")
+        st.dataframe(nba, use_container_width=True)
+        metric = st.selectbox("NBA metric", [c for c in ["mae", "mse", "rmse", "r2"] if c in nba])
+        fig = px.bar(
+            nba.sort_values(metric),
+            x=metric,
+            y="model",
+            orientation="h",
+            title=f"NBA models by {metric}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def refresh_audit() -> None:
+    cmd = [sys.executable, str(PROJECT_ROOT / "scripts" / "audit_data_quality.py")]
+    completed = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False, capture_output=True, text=True)
+    if completed.returncode == 0:
+        st.cache_data.clear()
+        st.success("Аудит обновлен.")
+        if completed.stdout:
+            st.code(completed.stdout)
+    else:
+        st.error("Не удалось обновить аудит.")
+        st.code(completed.stderr or completed.stdout)
+
+
+def main() -> None:
+    st.set_page_config(page_title="Match Dynamics Data Audit", layout="wide")
+    st.title("Match Dynamics Data Audit")
+
+    with st.sidebar:
+        st.caption(f"Project: `{PROJECT_ROOT}`")
+        st.caption(f"Audit files: `{AUDIT_DIR}`")
+        if st.button("Refresh audit tables"):
+            refresh_audit()
+        st.divider()
+        page = st.radio(
+            "Page",
+            [
+                "Overview",
+                "Football Raw",
+                "Football Processed",
+                "NBA Raw",
+                "NBA Processed",
+                "NBA Join Quality",
+                "Feature Engineering",
+                "Correlations",
+                "Model Metrics",
+            ],
+        )
+
+    if page == "Overview":
+        show_overview()
+    elif page == "Football Raw":
+        show_football_raw()
+    elif page == "Football Processed":
+        show_football_processed()
+    elif page == "NBA Raw":
+        show_nba_raw()
+    elif page == "NBA Processed":
+        show_nba_processed()
+    elif page == "NBA Join Quality":
+        show_join_quality()
+    elif page == "Feature Engineering":
+        show_feature_engineering()
+    elif page == "Correlations":
+        show_correlations()
+    elif page == "Model Metrics":
+        show_model_metrics()
+
+
+if __name__ == "__main__":
+    main()
