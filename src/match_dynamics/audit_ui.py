@@ -980,6 +980,43 @@ def show_football_metrics() -> None:
             with cols[idx % 2]:
                 st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
 
+    balanced_best = load_football_metric_table("threshold_tuning_balanced/balanced_thresholds.csv")
+    balanced_metrics = load_football_metric_table(
+        "threshold_tuning_balanced/balanced_threshold_metrics.csv"
+    )
+    balanced_comparison = load_football_metric_table(
+        "threshold_tuning_balanced/balanced_threshold_comparison.csv"
+    )
+    if not balanced_best.empty:
+        st.subheader("Balanced top-50 threshold tuning")
+        st.caption(
+            "Validation F1 is optimized under precision constraints: home >= 0.60, away >= 0.55."
+        )
+        st.dataframe(balanced_best, use_container_width=True)
+    if not balanced_metrics.empty:
+        st.dataframe(balanced_metrics, use_container_width=True, height=320)
+    if not balanced_comparison.empty:
+        st.dataframe(balanced_comparison, use_container_width=True, height=260)
+        fig = px.bar(
+            balanced_comparison,
+            x="balanced_minus_0_5",
+            y="metric",
+            color="target",
+            barmode="group",
+            orientation="h",
+            title="Balanced threshold test delta vs 0.5",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    balanced_figures_dir = (
+        PROJECT_ROOT / "outputs" / "figures" / "football" / "threshold_tuning_balanced"
+    )
+    balanced_figures = sorted(balanced_figures_dir.glob("balanced_threshold_curves_*.png"))
+    if balanced_figures:
+        cols = st.columns(2)
+        for idx, fig_path in enumerate(balanced_figures):
+            with cols[idx % 2]:
+                st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
+
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
     if loss_fig.exists():
