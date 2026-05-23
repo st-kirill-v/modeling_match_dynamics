@@ -500,6 +500,22 @@ def show_football_merged_feature_engineering() -> None:
     head = read_csv_head(str(feature_path), head_rows, feature_stamp)
     st.dataframe(head, use_container_width=True, height=620)
 
+    st.subheader("Feature engineering reports")
+    summary = load_report_table("football_merged_feature_engineering_historical_summary.csv")
+    validation = load_report_table("football_merged_feature_engineering_historical_validation.csv")
+    created = load_report_table(
+        "football_merged_feature_engineering_historical_created_features.csv"
+    )
+    if not summary.empty:
+        st.markdown("**Historical team-strength summary**")
+        st.dataframe(summary, use_container_width=True)
+    if not validation.empty:
+        st.markdown("**Historical leakage validation**")
+        st.dataframe(validation, use_container_width=True)
+    if not created.empty:
+        with st.expander("Historical features created"):
+            st.dataframe(created, use_container_width=True, height=360)
+
     st.subheader("Target distribution")
     target_dist = load_report_table("football_merged_feature_engineering_target_distribution.csv")
     if target_dist.empty:
