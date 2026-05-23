@@ -160,6 +160,41 @@ MINUTE_METADATA_COLUMNS = [
     "final_score",
 ]
 
+TARGET_COLUMNS = [
+    "home_scores_next_half",
+    "away_scores_next_half",
+]
+
+AUXILIARY_TARGET_COLUMNS = [
+    "second_half_home_goals",
+    "second_half_away_goals",
+]
+
+LEAKAGE_COLUMNS = [
+    "fthg",
+    "ftag",
+    "final_score",
+    "second_half_home_goals",
+    "second_half_away_goals",
+]
+
+BOOKMAKER_PRIOR_COLUMNS = [
+    "odd_h",
+    "odd_d",
+    "odd_a",
+]
+
+MINUTE_METADATA_ROLE_COLUMNS = [
+    "id_odsp",
+    "date",
+    "league",
+    "season",
+    "country",
+    "ht",
+    "at",
+    "time",
+]
+
 
 def _to_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
@@ -526,6 +561,262 @@ def duplicate_feature_checks(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def minute_level_count_columns(df: pd.DataFrame) -> list[str]:
+    protected = {
+        *MINUTE_METADATA_ROLE_COLUMNS,
+        *LEAKAGE_COLUMNS,
+        *TARGET_COLUMNS,
+        *AUXILIARY_TARGET_COLUMNS,
+        *BOOKMAKER_PRIOR_COLUMNS,
+    }
+    numeric_like = []
+    for col in df.columns:
+        if col in protected:
+            continue
+        if col.startswith(("home_", "away_")) or col.startswith("score_diff_"):
+            numeric_like.append(col)
+    return numeric_like
+
+
+def goal_semantics_report(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for col in ["home_goal", "away_goal"]:
+        exists = col in df.columns
+        rows.append(
+            {
+                "column": col,
+                "exists": exists,
+                "meaning": (
+                    "Current-minute first-half goal count aggregated from event-level is_goal "
+                    "and side before the second-half targets were attached."
+                    if exists
+                    else "Column is absent."
+                ),
+                "leakage_status": "not_leakage_current_minute_event"
+                if exists
+                else "not_applicable",
+                "action": "kept" if exists else "not_applicable",
+                "total_count": int(pd.to_numeric(df[col], errors="coerce").fillna(0).sum())
+                if exists
+                else 0,
+                "nonzero_rows": int(pd.to_numeric(df[col], errors="coerce").fillna(0).gt(0).sum())
+                if exists
+                else 0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def date_diagnostics(df: pd.DataFrame) -> pd.DataFrame:
+    if "date" not in df.columns:
+        return pd.DataFrame(
+            [
+                {
+                    "metric": "date_exists",
+                    "value": False,
+                }
+            ]
+        )
+    date = pd.to_datetime(df["date"], errors="coerce")
+    sorted_keys = df.assign(date=date).sort_values(["date", "id_odsp", "time"], kind="mergesort")
+    is_sorted = df[["id_odsp", "time"]].reset_index(drop=True).equals(
+        sorted_keys[["id_odsp", "time"]].reset_index(drop=True)
+    ) and date.reset_index(drop=True).equals(sorted_keys["date"].reset_index(drop=True))
+    return pd.DataFrame(
+        [
+            {"metric": "date_exists", "value": True},
+            {"metric": "date_nulls", "value": int(date.isna().sum())},
+            {"metric": "min_date", "value": str(date.min().date()) if date.notna().any() else ""},
+            {"metric": "max_date", "value": str(date.max().date()) if date.notna().any() else ""},
+            {"metric": "unique_dates", "value": int(date.nunique(dropna=True))},
+            {"metric": "sorted_by_date_id_time_before_cleanup", "value": bool(is_sorted)},
+        ]
+    )
+
+
+def column_role_report(df: pd.DataFrame) -> pd.DataFrame:
+    metadata = [col for col in MINUTE_METADATA_ROLE_COLUMNS if col in df.columns]
+    target = [col for col in TARGET_COLUMNS if col in df.columns]
+    leakage = [col for col in [*LEAKAGE_COLUMNS, *BOOKMAKER_PRIOR_COLUMNS] if col in df.columns]
+    excluded = set(metadata + target + leakage)
+    safe = [
+        col
+        for col in df.columns
+        if col not in excluded and not pd.api.types.is_object_dtype(df[col])
+    ]
+    rows = []
+    for role, columns in [
+        ("safe_feature", safe),
+        ("metadata", metadata),
+        ("leakage_or_not_safe_feature", leakage),
+        ("target", target),
+    ]:
+        for col in columns:
+            rows.append({"role": role, "column": col, "dtype": str(df[col].dtype)})
+    return pd.DataFrame(rows)
+
+
+def cleanup_type_checks(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    binary_or_count = [
+        col for col in feature_cols if col.startswith(("home_", "away_")) and col in df.columns
+    ]
+    object_features = [
+        col
+        for col in feature_cols
+        if col in df.columns
+        and (pd.api.types.is_object_dtype(df[col]) or str(df[col].dtype) == "string")
+    ]
+    rows = [
+        {
+            "check": "binary_or_count_features_int8_int16",
+            "passed": all(str(df[col].dtype) in {"int8", "int16"} for col in binary_or_count),
+            "details": ", ".join(
+                sorted(
+                    [
+                        f"{col}:{df[col].dtype}"
+                        for col in binary_or_count
+                        if str(df[col].dtype) not in {"int8", "int16"}
+                    ]
+                )[:50]
+            ),
+        },
+        {
+            "check": "time_numeric",
+            "passed": "time" in df.columns and pd.api.types.is_numeric_dtype(df["time"]),
+            "details": str(df["time"].dtype) if "time" in df.columns else "missing",
+        },
+        {
+            "check": "date_datetime64_in_memory",
+            "passed": "date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["date"]),
+            "details": str(df["date"].dtype) if "date" in df.columns else "missing",
+        },
+        {
+            "check": "target_columns_numeric",
+            "passed": all(
+                col in df.columns and pd.api.types.is_numeric_dtype(df[col])
+                for col in TARGET_COLUMNS
+            ),
+            "details": ", ".join(
+                f"{col}:{df[col].dtype}" for col in TARGET_COLUMNS if col in df.columns
+            ),
+        },
+        {
+            "check": "object_columns_not_used_as_numeric_features",
+            "passed": len(object_features) == 0,
+            "details": ", ".join(object_features),
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def final_minute_diagnostics(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    rows_per_match = (
+        df.groupby("id_odsp").size() if "id_odsp" in df.columns else pd.Series(dtype=int)
+    )
+    dtype_counts = (
+        df[feature_cols].dtypes.astype(str).value_counts() if feature_cols else pd.Series(dtype=int)
+    )
+    rows = [
+        {"metric": "final_rows", "value": df.shape[0]},
+        {"metric": "final_columns", "value": df.shape[1]},
+        {
+            "metric": "number_of_matches",
+            "value": int(df["id_odsp"].nunique()) if "id_odsp" in df else 0,
+        },
+        {"metric": "feature_columns", "value": len(feature_cols)},
+        {"metric": "target_columns", "value": len([c for c in TARGET_COLUMNS if c in df.columns])},
+    ]
+    for metric, value in rows_per_match.describe().items():
+        rows.append({"metric": f"rows_per_match_{metric}", "value": value})
+    for dtype, count in dtype_counts.items():
+        rows.append({"metric": f"feature_dtype_{dtype}", "value": int(count)})
+    return pd.DataFrame(rows)
+
+
+def cleanup_minute_level_processed(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    out = df.copy()
+    dropped = []
+
+    if "Unnamed: 0" in out.columns:
+        out = out.drop(columns=["Unnamed: 0"])
+        dropped.append("Unnamed: 0")
+
+    date_before = date_diagnostics(out)
+    if "date" in out.columns:
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+
+    for col in ["time", "season", "fthg", "ftag"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")
+
+    for col in [*TARGET_COLUMNS, *AUXILIARY_TARGET_COLUMNS]:
+        if col in out.columns:
+            out[col] = (
+                pd.to_numeric(out[col], errors="coerce")
+                .fillna(0)
+                .astype("int16" if col.startswith("second_half") else "int8")
+            )
+
+    for col in minute_level_count_columns(out):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype("int16")
+
+    for col in ["id_odsp", "league", "country", "ht", "at", "final_score"]:
+        if col in out.columns:
+            out[col] = out[col].astype("string")
+
+    if {"date", "id_odsp", "time"}.issubset(out.columns):
+        out = out.sort_values(["date", "id_odsp", "time"], kind="mergesort").reset_index(drop=True)
+
+    roles = column_role_report(out)
+    feature_cols = roles.loc[roles["role"].eq("safe_feature"), "column"].tolist()
+    null_counts = (
+        out.isna()
+        .sum()
+        .reset_index()
+        .rename(columns={"index": "column", 0: "null_count"})
+        .query("null_count > 0")
+    )
+    feature_nulls = (
+        out[feature_cols]
+        .isna()
+        .sum()
+        .reset_index()
+        .rename(columns={"index": "column", 0: "null_count"})
+        .query("null_count > 0")
+        if feature_cols
+        else pd.DataFrame(columns=["column", "null_count"])
+    )
+
+    cleanup_log = pd.DataFrame(
+        [
+            {"action": "dropped", "column": col, "details": "Old pandas index column."}
+            for col in dropped
+        ]
+        + [
+            {
+                "action": "sorted",
+                "column": "date / id_odsp / time",
+                "details": "Dataset sorted chronologically for later temporal split.",
+            }
+        ]
+    )
+    reports = {
+        "cleanup_log": cleanup_log,
+        "date_diagnostics_before_cleanup": date_before,
+        "date_diagnostics_after_cleanup": date_diagnostics(out),
+        "goal_semantics": goal_semantics_report(out),
+        "column_roles": roles,
+        "type_checks": cleanup_type_checks(out, feature_cols),
+        "null_counts": null_counts,
+        "feature_null_counts": feature_nulls,
+        "final_diagnostics": final_minute_diagnostics(out, feature_cols),
+    }
+    return out, reports
+
+
 def build_minute_level_from_processed_events(
     event_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -731,6 +1022,7 @@ def save_football_merged_processed_outputs(
     first_pass_df, first_log = process_football_merged_events(input_df)
     event_df, second_log = process_event_type_assist_and_quality(first_pass_df)
     output_df, minute_log = build_minute_level_from_processed_events(event_df)
+    output_df, cleanup_reports = cleanup_minute_level_processed(output_df)
     log = pd.concat([first_log, second_log, minute_log], ignore_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_df.to_csv(output_path, index=False)
@@ -763,7 +1055,14 @@ def save_football_merged_processed_outputs(
         minute_level_summary(event_df, output_df, minute_log, output_path).to_csv(
             audit_dir / "football_merged_processed_minute_level_summary.csv", index=False
         )
+        save_minute_cleanup_reports(cleanup_reports, audit_dir)
     return output_df, log
+
+
+def save_minute_cleanup_reports(reports: dict[str, pd.DataFrame], audit_dir: Path) -> None:
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    for name, table in reports.items():
+        table.to_csv(audit_dir / f"football_merged_processed_{name}.csv", index=False)
 
 
 def save_second_pass_reports(
