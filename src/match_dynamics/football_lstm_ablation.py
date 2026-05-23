@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sklearn.metrics import confusion_matrix
 
 from .football_lstm_training import (
     _prediction_dict,
@@ -48,6 +49,32 @@ def build_ablation_lstm(input_shape: tuple[int, int]) -> tf.keras.Model:
         },
     )
     return model
+
+
+def confusion_matrix_rows_for_prob(
+    split: str,
+    target: str,
+    y_true: np.ndarray,
+    prob: np.ndarray,
+    threshold: float,
+    threshold_mode: str,
+) -> list[dict]:
+    matrix = confusion_matrix(y_true, (prob >= threshold).astype(int), labels=[0, 1])
+    rows = []
+    for true_label in [0, 1]:
+        for predicted_label in [0, 1]:
+            rows.append(
+                {
+                    "split": split,
+                    "target": target,
+                    "threshold_mode": threshold_mode,
+                    "threshold": threshold,
+                    "true_label": true_label,
+                    "predicted_label": predicted_label,
+                    "count": int(matrix[true_label, predicted_label]),
+                }
+            )
+    return rows
 
 
 def aggregate_feature_ranking(
@@ -363,6 +390,7 @@ def run_top50_retrain(
         models_dir / f"{artifact_prefix}_top_{len(feature_indices)}.keras"
     )
     fixed_rows = []
+    confusion_rows = []
     for split, X, y_home, y_away in [
         ("train", X_train[:, :, feature_indices], y_train_home, y_train_away),
         ("val", X_val[:, :, feature_indices], y_val_home, y_val_away),
@@ -383,7 +411,18 @@ def run_top50_retrain(
             row["target"] = target
             row["threshold_mode"] = "final_fixed"
             fixed_rows.append(row)
+            confusion_rows.extend(
+                confusion_matrix_rows_for_prob(
+                    split=split,
+                    target=target,
+                    y_true=y_true,
+                    prob=prob,
+                    threshold=FINAL_THRESHOLDS[target],
+                    threshold_mode="final_fixed",
+                )
+            )
     fixed_threshold_metrics = pd.DataFrame(fixed_rows)
+    confusion_df = pd.DataFrame(confusion_rows)
 
     metrics.to_csv(metrics_dir / f"{artifact_prefix}_metrics.csv", index=False)
     summary.to_csv(metrics_dir / f"{artifact_prefix}_training_summary.csv", index=False)
@@ -391,9 +430,11 @@ def run_top50_retrain(
         metrics_dir / f"{artifact_prefix}_final_threshold_metrics.csv",
         index=False,
     )
+    confusion_df.to_csv(metrics_dir / f"{artifact_prefix}_confusion_matrices.csv", index=False)
     return {
         "metrics": metrics,
         "training_summary": summary,
         "final_threshold_metrics": fixed_threshold_metrics,
+        "confusion_matrices": confusion_df,
         "selected_features": selected,
     }

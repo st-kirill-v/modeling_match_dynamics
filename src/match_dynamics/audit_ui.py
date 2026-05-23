@@ -845,6 +845,7 @@ def show_football_metrics() -> None:
     lstm_shapes = load_football_metric_table("baseline_lstm_shapes.csv")
     overfit = load_football_metric_table("baseline_lstm_overfitting_report.csv")
     confusion = load_football_metric_table("baseline_lstm_confusion_matrices.csv")
+    top50_retrain_confusion = load_football_metric_table("top50_retrain_confusion_matrices.csv")
     ablation_comparison = load_football_metric_table("feature_ablation_fast_comparison.csv")
     ablation_summary = load_football_metric_table("feature_ablation_fast_training_summary.csv")
     ablation_ranking = load_football_metric_table("feature_ablation_fast_feature_ranking.csv")
@@ -894,10 +895,14 @@ def show_football_metrics() -> None:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    if not confusion.empty:
+    display_confusion = top50_retrain_confusion if not top50_retrain_confusion.empty else confusion
+    if not display_confusion.empty:
         st.subheader("Confusion matrices")
-        st.dataframe(confusion, use_container_width=True, height=260)
-        split_values = sorted(confusion["split"].unique().tolist())
+        st.caption(
+            "Showing top-50 retrain with final fixed thresholds when available; otherwise baseline."
+        )
+        st.dataframe(display_confusion, use_container_width=True, height=260)
+        split_values = sorted(display_confusion["split"].unique().tolist())
         split = st.selectbox(
             "Confusion matrix split",
             split_values,
@@ -906,8 +911,8 @@ def show_football_metrics() -> None:
         )
         cols = st.columns(2)
         for idx, target in enumerate(["home_scores_next_half", "away_scores_next_half"]):
-            matrix_df = confusion[
-                confusion["split"].eq(split) & confusion["target"].eq(target)
+            matrix_df = display_confusion[
+                display_confusion["split"].eq(split) & display_confusion["target"].eq(target)
             ].pivot(index="true_label", columns="predicted_label", values="count")
             matrix_df = matrix_df.reindex(index=[0, 1], columns=[0, 1]).fillna(0).astype(int)
             with cols[idx]:
@@ -976,6 +981,33 @@ def show_football_metrics() -> None:
                 title="Top-50 retrain loss",
             )
             st.plotly_chart(fig, use_container_width=True)
+    if not top50_retrain_confusion.empty:
+        st.markdown("**Top-50 retrain confusion matrices with final fixed thresholds**")
+        split_values = sorted(top50_retrain_confusion["split"].unique().tolist())
+        split = st.selectbox(
+            "Top-50 retrain confusion split",
+            split_values,
+            index=split_values.index("test") if "test" in split_values else 0,
+            key="top50_retrain_confusion_split",
+        )
+        cols = st.columns(2)
+        for idx, target in enumerate(["home_scores_next_half", "away_scores_next_half"]):
+            matrix_df = top50_retrain_confusion[
+                top50_retrain_confusion["split"].eq(split)
+                & top50_retrain_confusion["target"].eq(target)
+            ].pivot(index="true_label", columns="predicted_label", values="count")
+            matrix_df = matrix_df.reindex(index=[0, 1], columns=[0, 1]).fillna(0).astype(int)
+            with cols[idx]:
+                st.markdown(f"**{split}: {target}**")
+                st.dataframe(matrix_df, use_container_width=True)
+                fig = px.imshow(
+                    matrix_df,
+                    text_auto=True,
+                    color_continuous_scale="Blues",
+                    labels={"x": "Predicted", "y": "True", "color": "Count"},
+                    title=f"Top-50 retrain confusion matrix: {target}",
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
     threshold_best = load_football_metric_table("threshold_tuning/best_thresholds.csv")
     threshold_metrics = load_football_metric_table("threshold_tuning/threshold_metrics.csv")
