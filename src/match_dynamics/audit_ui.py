@@ -27,6 +27,14 @@ def read_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(fpath)
 
 
+@st.cache_data(show_spinner=False)
+def read_csv_head(path: str, nrows: int) -> pd.DataFrame:
+    fpath = Path(path)
+    if not fpath.exists():
+        return pd.DataFrame()
+    return pd.read_csv(fpath, nrows=nrows)
+
+
 def load_table(name: str) -> pd.DataFrame:
     return read_csv(str(csv_path(name)))
 
@@ -133,6 +141,74 @@ def show_football_raw() -> None:
     show_missing_bar(profile, "Football Raw: Top Missing Columns")
     show_dtype_bar(profile, "Football Raw: Column Types")
     st.subheader("Column profile")
+    show_profile_table(profile)
+
+
+def show_football_merge() -> None:
+    st.header("Football Merge: events.csv + ginf.csv")
+    st.caption(
+        "One match row from ginf.csv is left-joined to many event rows from events.csv by id_odsp. "
+        "Duplicated match-level values per event are expected for event-level ML pipelines."
+    )
+
+    summary = load_table("football_merge_summary.csv")
+    checks = load_table("football_merge_checks.csv")
+    rows_stats = load_table("football_merge_rows_per_match_stats.csv")
+    profile = load_table("football_merged_event_match_columns.csv")
+
+    if summary.empty:
+        st.warning("Merge tables not found. Click `Refresh audit tables` in the sidebar.")
+        return
+
+    st.subheader("Merge summary")
+    st.dataframe(summary, use_container_width=True)
+
+    merged_row = summary[summary["dataset"].eq("merged")]
+    if not merged_row.empty:
+        cols = st.columns(4)
+        cols[0].metric("Merged rows", f"{int(merged_row['rows'].iloc[0]):,}".replace(",", " "))
+        cols[1].metric("Merged columns", int(merged_row["columns"].iloc[0]))
+        cols[2].metric("Unique matches", int(merged_row["unique_matches"].iloc[0]))
+        if "matched_rate" in merged_row:
+            cols[3].metric("Matched rows", f"{float(merged_row['matched_rate'].iloc[0]):.1%}")
+
+    st.subheader("Validation checks")
+    st.dataframe(checks, use_container_width=True, height=300)
+
+    st.subheader("Rows per match stats")
+    st.dataframe(rows_stats, use_container_width=True)
+    if not rows_stats.empty:
+        stat_order = ["min", "p05", "median", "mean", "p95", "p99", "max"]
+        plot_df = rows_stats[rows_stats["metric"].isin(stat_order)].copy()
+        plot_df["metric"] = pd.Categorical(plot_df["metric"], categories=stat_order, ordered=True)
+        plot_df = plot_df.sort_values("metric")
+        fig = px.bar(
+            plot_df,
+            x="metric",
+            y="value",
+            title="Events Rows Per Match: Summary Stats",
+            text="value",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Merged event-level head() with all columns")
+    head_rows = st.slider("Rows to show from data/football_merged.csv", 5, 200, 30)
+    merged_head = read_csv_head(str(PROJECT_ROOT / "data" / "football_merged.csv"), head_rows)
+    if merged_head.empty:
+        st.warning(
+            "data/football_merged.csv не найден. Сначала запусти merge или Refresh audit tables."
+        )
+    else:
+        st.caption(
+            "Это первые строки полного event-level merge: все колонки events.csv + match-level колонки ginf.csv."
+        )
+        st.dataframe(merged_head, use_container_width=True, height=560)
+
+    show_head_table("football_merged_head.csv", "Compact merged preview: key columns")
+    show_missing_bar(profile, "Football Merged: Top Missing Columns")
+    show_dtype_bar(profile, "Football Merged: Column Types")
+
+    st.subheader("Merged column profile")
     show_profile_table(profile)
 
 
@@ -427,6 +503,7 @@ def main() -> None:
             [
                 "Overview",
                 "Football Raw",
+                "Football Merge",
                 "Football Processed",
                 "NBA Raw",
                 "NBA Processed",
@@ -441,6 +518,8 @@ def main() -> None:
         show_overview()
     elif page == "Football Raw":
         show_football_raw()
+    elif page == "Football Merge":
+        show_football_merge()
     elif page == "Football Processed":
         show_football_processed()
     elif page == "NBA Raw":

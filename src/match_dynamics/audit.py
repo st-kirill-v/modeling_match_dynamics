@@ -10,6 +10,11 @@ import pandas as pd
 from .config import ProjectConfig
 from .data_loading import ensure_football_events
 from .football import preprocess_football_events
+from .football_merge import (
+    build_football_event_match_merge,
+    football_merge_summary,
+    football_rows_per_match_stats,
+)
 
 
 @dataclass(frozen=True)
@@ -236,6 +241,63 @@ def run_data_audit(cfg: ProjectConfig, audit_cfg: AuditConfig) -> Path:
     report_files: list[str] = []
 
     football_raw = ensure_football_events(cfg)
+    ginf_path = cfg.football_dir / "ginf.csv"
+    if ginf_path.exists():
+        football_ginf = pd.read_csv(ginf_path)
+        football_merged, football_merge_checks = build_football_event_match_merge(
+            football_raw, football_ginf
+        )
+        football_merged_path = cfg.data_dir / "football_merged.csv"
+        football_merged.to_csv(football_merged_path, index=False)
+        football_merge_checks.to_csv(
+            audit_cfg.output_dir / "football_merge_checks.csv", index=False
+        )
+        football_merge_summary(football_raw, football_ginf, football_merged).to_csv(
+            audit_cfg.output_dir / "football_merge_summary.csv", index=False
+        )
+        football_rows_per_match_stats(football_merged).to_csv(
+            audit_cfg.output_dir / "football_merge_rows_per_match_stats.csv", index=False
+        )
+        sample_cols = [
+            c
+            for c in [
+                "id_odsp",
+                "id_event",
+                "time",
+                "event_type",
+                "side",
+                "event_team",
+                "opponent",
+                "ht",
+                "at",
+                "fthg",
+                "ftag",
+                "final_score",
+            ]
+            if c in football_merged.columns
+        ]
+        football_merged[sample_cols].head(20).to_csv(
+            audit_cfg.output_dir / "football_merged_head.csv", index=False
+        )
+        overviews.append(
+            save_dataset_audit(
+                "football_merged_event_match",
+                football_merged,
+                audit_cfg.output_dir,
+                audit_cfg.sample_rows,
+            )
+        )
+        report_files.extend(
+            [
+                "football_merge_checks.csv",
+                "football_merge_summary.csv",
+                "football_merge_rows_per_match_stats.csv",
+                "football_merged_head.csv",
+                "football_merged_event_match_columns.csv",
+                "football_merged_event_match_head.csv",
+            ]
+        )
+
     football_minute, football_model_df = preprocess_football_events(football_raw)
     for name, df in [
         ("football_raw_events", football_raw),
