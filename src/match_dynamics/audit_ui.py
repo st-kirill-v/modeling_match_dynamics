@@ -460,6 +460,47 @@ def show_football_merged_processed() -> None:
             st.plotly_chart(fig, use_container_width=True)
 
 
+def show_football_merged_feature_engineering() -> None:
+    st.header("Football Merged Feature Engineering: football_merged_feature_engineering.csv")
+    st.caption(
+        "Working copy for feature engineering. From this point, feature changes should happen here, "
+        "while football_merged_processed.csv stays as the clean processed baseline."
+    )
+
+    feature_path = PROJECT_ROOT / "data" / "football_merged_feature_engineering.csv"
+    feature_stamp = file_signature(feature_path)
+    summary = read_event_dataset_summary(
+        str(feature_path), "football_merged_feature_engineering", feature_stamp
+    )
+
+    if summary.empty:
+        st.warning(
+            "data/football_merged_feature_engineering.csv not found. Create it from the processed dataset first."
+        )
+        return
+
+    st.subheader("Feature engineering dataset summary")
+    st.dataframe(summary, use_container_width=True)
+
+    row = summary.iloc[0]
+    cols = st.columns(4)
+    cols[0].metric("Rows", f"{int(row['rows']):,}".replace(",", " "))
+    cols[1].metric("Columns", int(row["columns"]))
+    cols[2].metric("Unique matches", int(row["unique_matches"]))
+    cols[3].metric("Null match ids", int(row["null_id_odsp"]))
+
+    st.subheader("head() with all columns")
+    head_rows = st.slider(
+        "Rows to show from data/football_merged_feature_engineering.csv",
+        5,
+        200,
+        30,
+        key="football_merged_feature_engineering_head_rows",
+    )
+    head = read_csv_head(str(feature_path), head_rows, feature_stamp)
+    st.dataframe(head, use_container_width=True, height=620)
+
+
 def show_football_processed() -> None:
     st.header("Football Processed")
     level = st.radio(
@@ -753,6 +794,7 @@ def main() -> None:
                 "Football Raw",
                 "Football Merge",
                 "Football Merged Processed",
+                "Football Merged Feature Engineering",
                 "Football Processed",
                 "NBA Raw",
                 "NBA Processed",
@@ -771,6 +813,8 @@ def main() -> None:
         show_football_merge()
     elif page == "Football Merged Processed":
         show_football_merged_processed()
+    elif page == "Football Merged Feature Engineering":
+        show_football_merged_feature_engineering()
     elif page == "Football Processed":
         show_football_processed()
     elif page == "NBA Raw":
