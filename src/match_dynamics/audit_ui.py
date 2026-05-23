@@ -192,7 +192,67 @@ def show_head_table(name: str, title: str) -> None:
 
 
 def show_overview() -> None:
-    st.header("Overview")
+    st.header("Анализ и моделирование динамики спортивных событий")
+    st.markdown(
+        """
+        ### Цель работы
+
+        Применить методы глубокого обучения для анализа данных о спортивных событиях,
+        моделирования динамики матчей и прогнозирования ключевых событий на основе
+        временных рядов.
+
+        В рамках текущего проекта основной фокус сделан на задаче:
+
+        **Моделирование динамики матчей**
+        Прогнозировать изменение счета или ключевые события на основе последовательности
+        событий внутри матча.
+
+        Этапы работы:
+        1. Подготовить данные из Football Events и NBA Tracking как временные ряды событий.
+        2. Построить LSTM-модель для анализа последовательностей.
+        3. Обучить модель на исторических данных.
+        4. Оценить качество прогноза.
+        """
+    )
+
+    st.subheader("Football Events")
+    st.markdown(
+        """
+        **Источник:** [Kaggle: Football Events](https://www.kaggle.com/datasets/secareanualin/football-events)
+
+        В проекте используются два основных файла:
+        - `events.csv` — event-level данные: события матча, минута, сторона, тип события,
+          игроки, удары, передачи, карточки и другие игровые действия.
+        - `ginf.csv` — match-level данные: команды, лига, сезон, страна, дата матча,
+          финальный счет и betting odds.
+
+        Что было сделано с football data:
+        - выполнен корректный merge `events.csv` + `ginf.csv` по `id_odsp`;
+        - event-level данные преобразованы в minute-level формат;
+        - одна строка теперь соответствует одной минуте одного матча;
+        - добавлены признаки первого тайма, rolling/momentum/context features;
+        - добавлены historical team-strength features без leakage;
+        - построены targets второго тайма:
+          `home_scores_next_half` и `away_scores_next_half`;
+        - для LSTM используется только первый тайм: `time <= 45`.
+
+        Текущая football задача:
+
+        **по событиям первого тайма предсказать, забьют ли хозяева и гости во втором тайме.**
+        """
+    )
+
+    st.subheader("NBA Player Tracking")
+    st.markdown(
+        """
+        **Источник:** [GitHub: nba-movement-data](https://github.com/sealneaward/nba-movement-data)
+
+        Раздел NBA оставлен как отдельная часть проекта. Здесь будут использоваться
+        tracking данные игроков и мяча, play-by-play события и shot данные.
+        """
+    )
+
+    st.subheader("Быстрая сводка по локальным датасетам")
     overview = load_table("dataset_overview.csv")
     if overview.empty:
         st.warning("Аудит еще не сгенерирован. Нажми кнопку обновления в sidebar.")
@@ -232,14 +292,111 @@ def show_overview() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def show_football_raw() -> None:
-    st.header("Football Raw")
-    profile = load_table("football_raw_events_columns.csv")
-    show_head_table("football_raw_events_head.csv", "Raw events head()")
-    show_missing_bar(profile, "Football Raw: Top Missing Columns")
-    show_dtype_bar(profile, "Football Raw: Column Types")
-    st.subheader("Column profile")
-    show_profile_table(profile)
+def show_conclusion() -> None:
+    st.header("Conclusion")
+
+    st.subheader("Футбол")
+    st.markdown(
+        """
+        ### Итоговый вывод по football LSTM pipeline
+
+        Был построен полноценный pipeline прогнозирования событий второго тайма по событиям
+        первого тайма футбольного матча.
+
+        Pipeline включает:
+        - merge и preprocessing event data;
+        - leakage-safe temporal split;
+        - advanced feature engineering;
+        - historical team-strength features;
+        - rolling/momentum/context features;
+        - sequence construction для LSTM;
+        - feature ablation;
+        - threshold tuning;
+        - calibration;
+        - error analysis.
+
+        Финальная модель:
+        - multi-output LSTM;
+        - top-50 features;
+        - sequence length = 45 минут;
+        - prediction targets:
+          `home_scores_next_half`, `away_scores_next_half`.
+
+        Финальные thresholds:
+        - HOME = 0.47
+        - AWAY = 0.49
+
+        Главный результат:
+        модель научилась извлекать реальный signal из match dynamics и historical team context.
+
+        Наиболее информативными оказались:
+        - team strength;
+        - team form;
+        - first-half pressure;
+        - momentum/intensity features;
+        - contextual targeted features.
+
+        Финальные test результаты:
+
+        **HOME**
+        - ROC-AUC ≈ 0.65
+        - PR-AUC ≈ 0.72
+        - MAE = 0.4678
+        - MSE = 0.2313
+        - RMSE = 0.4810
+
+        **AWAY**
+        - ROC-AUC ≈ 0.58-0.59
+        - PR-AUC ≈ 0.57-0.60
+        - MAE = 0.4893
+        - MSE = 0.2466
+        - RMSE = 0.4966
+
+        Важно:
+        так как задача бинарная, MSE по вероятностям эквивалентен Brier score.
+        Чем ниже значение, тем лучше калиброваны вероятности модели.
+
+        По сравнению с baseline:
+        - HOME улучшился: MSE 0.2338 -> 0.2313
+        - AWAY немного ухудшился: MSE 0.2455 -> 0.2466
+
+        Home-модель показала стабильное качество:
+        - высокий recall;
+        - устойчивые probabilities;
+        - meaningful signal из historical strength и pressure dynamics.
+
+        Away-модель оказалась значительно сложнее:
+        - away second-half goals имеют высокий уровень случайности и variance;
+        - модель склонна к false positives;
+        - targeted features улучшили recall, но не решили полностью проблему precision.
+
+        Error analysis показал, что модель ведет себя логично:
+        - переоценивает сильные домашние команды;
+        - хуже работает в low-tempo матчах и при счете 0:0 после первого тайма;
+        - корректно использует pressure и historical strength signals.
+
+        Calibration не дал устойчивого улучшения, поэтому финальная версия использует
+        raw probabilities.
+
+        Главный вывод:
+        получен методологически корректный и честный sports forecasting pipeline без leakage
+        и с realistic temporal evaluation.
+
+        Результаты нельзя считать “идеальными”, но они являются реалистичными для noisy
+        football forecasting задачи без:
+        - xG;
+        - player tracking;
+        - live odds;
+        - lineup quality;
+        - betting market features.
+
+        Pipeline можно считать успешным baseline-решением для дальнейших исследований
+        sports analytics и sequence modeling.
+        """
+    )
+
+    st.subheader("NBA")
+    st.markdown("Раздел NBA будет дополнен отдельно после финализации basketball pipeline.")
 
 
 def show_football_merge() -> None:
@@ -565,49 +722,6 @@ def show_football_merged_feature_engineering() -> None:
                 )
                 fig.update_layout(height=max(520, 22 * len(plot_df)))
                 st.plotly_chart(fig, use_container_width=True)
-
-
-def show_football_processed() -> None:
-    st.header("Football Processed")
-    level = st.radio(
-        "Processed table",
-        ["minute_level_processed", "first_half_model_df"],
-        horizontal=True,
-    )
-    prefix = f"football_{level}"
-    show_head_table(f"{prefix}_head.csv", f"{level} head()")
-    profile = load_table(f"{prefix}_columns.csv")
-    show_missing_bar(profile, f"Football {level}: Top Missing Columns")
-    show_dtype_bar(profile, f"Football {level}: Column Types")
-
-    changes = load_table("football_processing_changes.csv")
-    st.subheader("Processing changes")
-    st.dataframe(changes, use_container_width=True, height=260)
-
-    head = load_table(f"{prefix}_head.csv")
-    target_cols = [
-        c for c in ["home_scores_next_half", "away_scores_next_half"] if c in head.columns
-    ]
-    if target_cols:
-        target_rows = []
-        for col in target_cols:
-            counts = head[col].value_counts(dropna=False).reset_index()
-            counts.columns = ["value", "count"]
-            counts["target"] = col
-            target_rows.append(counts)
-        target_df = pd.concat(target_rows, ignore_index=True)
-        fig = px.bar(
-            target_df,
-            x="value",
-            y="count",
-            color="target",
-            barmode="group",
-            title="Target Values In Saved head()",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Column profile")
-    show_profile_table(profile)
 
 
 def show_nba_raw() -> None:
@@ -1243,33 +1357,28 @@ def main() -> None:
             "Page",
             [
                 "Overview",
-                "Football Raw",
                 "Football Merge",
                 "Football Merged Processed",
                 "Football Merged Feature Engineering",
-                "Football Processed",
                 "NBA Raw",
                 "NBA Processed",
                 "NBA Join Quality",
                 "Feature Engineering",
                 "Correlations",
                 "Football Metrics",
+                "Conclusion",
                 "Model Metrics",
             ],
         )
 
     if page == "Overview":
         show_overview()
-    elif page == "Football Raw":
-        show_football_raw()
     elif page == "Football Merge":
         show_football_merge()
     elif page == "Football Merged Processed":
         show_football_merged_processed()
     elif page == "Football Merged Feature Engineering":
         show_football_merged_feature_engineering()
-    elif page == "Football Processed":
-        show_football_processed()
     elif page == "NBA Raw":
         show_nba_raw()
     elif page == "NBA Processed":
@@ -1282,6 +1391,8 @@ def main() -> None:
         show_correlations()
     elif page == "Football Metrics":
         show_football_metrics()
+    elif page == "Conclusion":
+        show_conclusion()
     elif page == "Model Metrics":
         show_model_metrics()
 
