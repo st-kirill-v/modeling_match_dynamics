@@ -438,3 +438,77 @@ def run_top50_retrain(
         "confusion_matrices": confusion_df,
         "selected_features": selected,
     }
+
+
+def refresh_top50_retrain_threshold_outputs(
+    data_dir: Path,
+    models_dir: Path,
+    metrics_dir: Path,
+    selected_features_path: Path,
+    batch_size: int = 32,
+    artifact_prefix: str = "top50_retrain",
+) -> dict[str, pd.DataFrame]:
+    model_path = models_dir / "football" / f"{artifact_prefix}_top_50.keras"
+    if not model_path.exists():
+        model_path = models_dir / f"{artifact_prefix}_top_50.keras"
+    if not model_path.exists():
+        raise FileNotFoundError(f"Top-50 retrain model not found: {model_path}")
+
+    X_train, y_train_home, y_train_away, _ = load_sequence_npz(
+        data_dir / "football_train_sequences.npz"
+    )
+    X_val, y_val_home, y_val_away, _ = load_sequence_npz(data_dir / "football_val_sequences.npz")
+    X_test, y_test_home, y_test_away, _ = load_sequence_npz(
+        data_dir / "football_test_sequences.npz"
+    )
+    selected = pd.read_csv(selected_features_path)
+    feature_indices = selected["feature_index"].to_numpy(dtype=int)
+    model = tf.keras.models.load_model(model_path)
+
+    fixed_rows = []
+    confusion_rows = []
+    for split, X, y_home, y_away in [
+        ("train", X_train[:, :, feature_indices], y_train_home, y_train_away),
+        ("val", X_val[:, :, feature_indices], y_val_home, y_val_away),
+        ("test", X_test[:, :, feature_indices], y_test_home, y_test_away),
+    ]:
+        pred = _prediction_dict(model.predict(X, batch_size=batch_size, verbose=0))
+        for target, y_true, prob in [
+            ("home_scores_next_half", y_home, pred["home_scores_next_half"]),
+            ("away_scores_next_half", y_away, pred["away_scores_next_half"]),
+        ]:
+            row = evaluate_binary(
+                y_true=y_true,
+                prob=prob,
+                name=f"{artifact_prefix}_{target}_final_threshold",
+                threshold=FINAL_THRESHOLDS[target],
+            )
+            row["split"] = split
+            row["target"] = target
+            row["threshold_mode"] = "final_fixed"
+            fixed_rows.append(row)
+            confusion_rows.extend(
+                confusion_matrix_rows_for_prob(
+                    split=split,
+                    target=target,
+                    y_true=y_true,
+                    prob=prob,
+                    threshold=FINAL_THRESHOLDS[target],
+                    threshold_mode="final_fixed",
+                )
+            )
+
+    fixed_threshold_metrics = pd.DataFrame(fixed_rows)
+    confusion_df = pd.DataFrame(confusion_rows)
+    fixed_threshold_metrics.to_csv(
+        metrics_dir / "football" / f"{artifact_prefix}_final_threshold_metrics.csv",
+        index=False,
+    )
+    confusion_df.to_csv(
+        metrics_dir / "football" / f"{artifact_prefix}_confusion_matrices.csv",
+        index=False,
+    )
+    return {
+        "final_threshold_metrics": fixed_threshold_metrics,
+        "confusion_matrices": confusion_df,
+    }

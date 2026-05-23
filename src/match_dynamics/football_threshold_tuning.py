@@ -22,7 +22,7 @@ PRECISION_CONSTRAINTS = {
 }
 FINAL_THRESHOLDS = {
     "home_scores_next_half": 0.47,
-    "away_scores_next_half": 0.39,
+    "away_scores_next_half": 0.49,
 }
 
 
