@@ -500,6 +500,51 @@ def show_football_merged_feature_engineering() -> None:
     head = read_csv_head(str(feature_path), head_rows, feature_stamp)
     st.dataframe(head, use_container_width=True, height=620)
 
+    st.subheader("Target distribution")
+    target_dist = load_report_table("football_merged_feature_engineering_target_distribution.csv")
+    if target_dist.empty:
+        st.info("Target distribution is not ready. Run football feature engineering first.")
+    else:
+        st.dataframe(target_dist, use_container_width=True)
+        fig = px.bar(
+            target_dist,
+            x="value",
+            y="matches",
+            color="target",
+            barmode="group",
+            title="Target Distribution By Matches",
+            text="matches",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Feature importance proxy: correlation with targets")
+    corr = load_report_table("football_merged_feature_engineering_feature_target_correlations.csv")
+    if corr.empty:
+        st.info("Feature-target correlation report is not ready.")
+    else:
+        st.dataframe(corr, use_container_width=True, height=420)
+        for top_n in [20, 30, 40]:
+            st.markdown(f"**Top {top_n} absolute correlations**")
+            for target in ["home_scores_next_half", "away_scores_next_half"]:
+                plot_df = (
+                    corr[corr["target"].eq(target)]
+                    .sort_values("abs_correlation", ascending=False)
+                    .head(top_n)
+                    .sort_values("abs_correlation", ascending=True)
+                )
+                if plot_df.empty:
+                    continue
+                fig = px.bar(
+                    plot_df,
+                    x="correlation",
+                    y="feature",
+                    orientation="h",
+                    title=f"Top {top_n} Features vs {target}",
+                    hover_data=["abs_correlation"],
+                )
+                fig.update_layout(height=max(520, 22 * len(plot_df)))
+                st.plotly_chart(fig, use_container_width=True)
+
 
 def show_football_processed() -> None:
     st.header("Football Processed")
