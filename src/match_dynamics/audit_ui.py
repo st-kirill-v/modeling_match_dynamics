@@ -13,6 +13,7 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AUDIT_DIR = PROJECT_ROOT / "outputs" / "audits" / "data_quality"
 METRICS_DIR = PROJECT_ROOT / "outputs" / "metrics"
+REPORTS_DIR = PROJECT_ROOT / "outputs" / "reports"
 
 
 def csv_path(name: str) -> Path:
@@ -127,6 +128,11 @@ def load_table(name: str) -> pd.DataFrame:
 
 def load_metric_table(name: str) -> pd.DataFrame:
     path = METRICS_DIR / name
+    return read_csv(str(path), file_signature(path))
+
+
+def load_report_table(name: str) -> pd.DataFrame:
+    path = REPORTS_DIR / name
     return read_csv(str(path), file_signature(path))
 
 
@@ -409,6 +415,49 @@ def show_football_merged_processed() -> None:
 
     show_missing_bar(profile, "Football Merged Processed: Top Missing Columns")
     show_dtype_bar(profile, "Football Merged Processed: Column Types")
+
+    st.subheader("Target distribution")
+    target_dist = load_report_table("football_target_distribution.csv")
+    if target_dist.empty:
+        st.info("Target distribution report is not ready. Run target analysis first.")
+    else:
+        st.dataframe(target_dist, use_container_width=True)
+        fig = px.bar(
+            target_dist,
+            x="value",
+            y="matches",
+            color="target",
+            barmode="group",
+            title="Target Distribution By Matches",
+            text="matches",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Feature-target correlations")
+    corr = load_report_table("football_feature_target_correlations.csv")
+    if corr.empty:
+        st.info("Correlation report is not ready. Run target analysis first.")
+    else:
+        st.dataframe(corr, use_container_width=True, height=420)
+        for target in ["home_scores_next_half", "away_scores_next_half"]:
+            plot_df = (
+                corr[corr["target"].eq(target)]
+                .sort_values("abs_correlation", ascending=False)
+                .head(20)
+                .sort_values("abs_correlation", ascending=True)
+            )
+            if plot_df.empty:
+                continue
+            fig = px.bar(
+                plot_df,
+                x="correlation",
+                y="feature",
+                orientation="h",
+                title=f"Top 20 Features vs {target}",
+                hover_data=["abs_correlation"],
+            )
+            fig.update_layout(height=max(460, 24 * len(plot_df)))
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def show_football_processed() -> None:

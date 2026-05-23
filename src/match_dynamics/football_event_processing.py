@@ -733,6 +733,128 @@ def final_minute_diagnostics(df: pd.DataFrame, feature_cols: list[str]) -> pd.Da
     return pd.DataFrame(rows)
 
 
+def feature_target_correlations(
+    df: pd.DataFrame,
+    top_n: int = 30,
+) -> pd.DataFrame:
+    roles = column_role_report(df)
+    feature_cols = roles.loc[roles["role"].eq("safe_feature"), "column"].tolist()
+    rows = []
+    for target in [col for col in TARGET_COLUMNS if col in df.columns]:
+        target_s = pd.to_numeric(df[target], errors="coerce")
+        for feature in feature_cols:
+            feature_s = pd.to_numeric(df[feature], errors="coerce")
+            if feature_s.nunique(dropna=True) <= 1 or target_s.nunique(dropna=True) <= 1:
+                corr = pd.NA
+            else:
+                corr = feature_s.corr(target_s)
+            rows.append(
+                {
+                    "target": target,
+                    "feature": feature,
+                    "correlation": corr,
+                    "abs_correlation": abs(corr) if pd.notna(corr) else pd.NA,
+                }
+            )
+    corr_df = pd.DataFrame(rows).dropna(subset=["abs_correlation"])
+    if corr_df.empty:
+        return corr_df
+    return (
+        corr_df.sort_values(["target", "abs_correlation"], ascending=[True, False])
+        .groupby("target", as_index=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+
+def processed_target_distribution(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for target in [col for col in TARGET_COLUMNS if col in df.columns]:
+        counts = df[target].value_counts(dropna=False).sort_index()
+        match_counts = df.drop_duplicates("id_odsp")[target].value_counts(dropna=False).sort_index()
+        for value, count in counts.items():
+            rows.append(
+                {
+                    "target": target,
+                    "value": value,
+                    "minute_rows": int(count),
+                    "matches": int(match_counts.get(value, 0)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def processed_target_diagnostics(
+    df: pd.DataFrame,
+    log: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    roles = column_role_report(df)
+    feature_cols = roles.loc[roles["role"].eq("safe_feature"), "column"].tolist()
+    created_home_away = [
+        col
+        for col in df.columns
+        if col.startswith(("home_", "away_"))
+        and col not in [*TARGET_COLUMNS, *AUXILIARY_TARGET_COLUMNS]
+    ]
+    dropped_generic = []
+    if log is not None and not log.empty and {"action", "column"}.issubset(log.columns):
+        dropped_generic = log.loc[log["action"].eq("dropped"), "column"].dropna().tolist()
+    else:
+        dropped_generic = [col for col in HOME_AWAY_SPLIT_FEATURES if col not in df.columns]
+    matches = df["id_odsp"].nunique(dropna=True) if "id_odsp" in df.columns else 0
+    rows = [
+        {"metric": "input_shape", "value": f"{df.shape[0]} rows x {df.shape[1]} columns"},
+        {"metric": "output_shape", "value": f"{df.shape[0]} rows x {df.shape[1]} columns"},
+        {"metric": "number_of_matches", "value": matches},
+        {"metric": "number_of_minute_rows", "value": df.shape[0]},
+        {"metric": "expected_rows_matches_x_45", "value": matches * 45},
+        {"metric": "feature_columns", "value": len(feature_cols)},
+        {"metric": "target_columns", "value": len([c for c in TARGET_COLUMNS if c in df.columns])},
+        {"metric": "created_home_away_features", "value": len(created_home_away)},
+        {"metric": "dropped_generic_features", "value": len(dropped_generic)},
+        {"metric": "null_values_after_aggregation", "value": int(df.isna().sum().sum())},
+        {
+            "metric": "target_recalculation_note",
+            "value": (
+                "football_merged_processed.csv contains only first-half minutes 1-45. "
+                "Targets are present in this dataset, but strict recalculation with time > 45 "
+                "requires the full event-level source."
+            ),
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def save_processed_target_reports(
+    df: pd.DataFrame,
+    report_dir: Path,
+    audit_dir: Path | None = None,
+    log: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    reports = {
+        "feature_target_correlations": feature_target_correlations(df),
+        "target_distribution": processed_target_distribution(df),
+        "target_diagnostics": processed_target_diagnostics(df, log),
+        "sample_rows": df.head(20),
+    }
+    reports["feature_target_correlations"].to_csv(
+        report_dir / "football_feature_target_correlations.csv", index=False
+    )
+    reports["target_distribution"].to_csv(
+        report_dir / "football_target_distribution.csv", index=False
+    )
+    reports["target_diagnostics"].to_csv(
+        report_dir / "football_target_diagnostics.csv", index=False
+    )
+    reports["sample_rows"].to_csv(report_dir / "football_processed_sample_rows.csv", index=False)
+    if audit_dir is not None:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        for name, table in reports.items():
+            table.to_csv(audit_dir / f"football_merged_processed_{name}.csv", index=False)
+    return reports
+
+
 def cleanup_minute_level_processed(
     df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
@@ -1056,6 +1178,12 @@ def save_football_merged_processed_outputs(
             audit_dir / "football_merged_processed_minute_level_summary.csv", index=False
         )
         save_minute_cleanup_reports(cleanup_reports, audit_dir)
+        save_processed_target_reports(
+            output_df,
+            audit_dir.parent.parent / "reports",
+            audit_dir,
+            log,
+        )
     return output_df, log
 
 

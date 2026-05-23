@@ -336,6 +336,10 @@ def run_data_audit(cfg: ProjectConfig, audit_cfg: AuditConfig) -> Path:
                 "football_merged_processed_duplicate_feature_checks.csv",
                 "football_merged_processed_minute_level_log.csv",
                 "football_merged_processed_minute_level_summary.csv",
+                "football_merged_processed_feature_target_correlations.csv",
+                "football_merged_processed_target_distribution.csv",
+                "football_merged_processed_target_diagnostics.csv",
+                "football_merged_processed_sample_rows.csv",
             ]
         )
 
