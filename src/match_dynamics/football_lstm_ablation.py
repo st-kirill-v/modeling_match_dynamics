@@ -15,6 +15,8 @@ from .football_lstm_training import (
     plot_roc_curve,
     save_history,
 )
+from .evaluation import evaluate_binary
+from .football_threshold_tuning import FINAL_THRESHOLDS
 
 
 FEATURE_COUNTS = [100, 75, 50, 25]
@@ -314,4 +316,84 @@ def run_football_feature_ablation(
         "training_summary": summaries_df,
         "comparison": comparison,
         "ranking": ranking,
+    }
+
+
+def run_top50_retrain(
+    data_dir: Path,
+    models_dir: Path,
+    metrics_dir: Path,
+    figures_dir: Path,
+    selected_features_path: Path,
+    epochs: int = 25,
+    batch_size: int = 32,
+    artifact_prefix: str = "top50_retrain",
+) -> dict[str, pd.DataFrame]:
+    models_dir.mkdir(parents=True, exist_ok=True)
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    X_train, y_train_home, y_train_away, _ = load_sequence_npz(
+        data_dir / "football_train_sequences.npz"
+    )
+    X_val, y_val_home, y_val_away, _ = load_sequence_npz(data_dir / "football_val_sequences.npz")
+    X_test, y_test_home, y_test_away, _ = load_sequence_npz(
+        data_dir / "football_test_sequences.npz"
+    )
+    selected = pd.read_csv(selected_features_path)
+    feature_indices = selected["feature_index"].to_numpy(dtype=int)
+    data = {
+        "train": (X_train, y_train_home, y_train_away),
+        "val": (X_val, y_val_home, y_val_away),
+        "test": (X_test, y_test_home, y_test_away),
+    }
+    metrics, summary = fit_and_evaluate_subset(
+        feature_count=len(feature_indices),
+        feature_indices=feature_indices,
+        data=data,
+        models_dir=models_dir,
+        metrics_dir=metrics_dir,
+        figures_dir=figures_dir,
+        epochs=epochs,
+        batch_size=batch_size,
+        artifact_prefix=artifact_prefix,
+    )
+
+    model = tf.keras.models.load_model(
+        models_dir / f"{artifact_prefix}_top_{len(feature_indices)}.keras"
+    )
+    fixed_rows = []
+    for split, X, y_home, y_away in [
+        ("train", X_train[:, :, feature_indices], y_train_home, y_train_away),
+        ("val", X_val[:, :, feature_indices], y_val_home, y_val_away),
+        ("test", X_test[:, :, feature_indices], y_test_home, y_test_away),
+    ]:
+        pred = _prediction_dict(model.predict(X, batch_size=batch_size, verbose=0))
+        for target, y_true, prob in [
+            ("home_scores_next_half", y_home, pred["home_scores_next_half"]),
+            ("away_scores_next_half", y_away, pred["away_scores_next_half"]),
+        ]:
+            row = evaluate_binary(
+                y_true=y_true,
+                prob=prob,
+                name=f"{artifact_prefix}_{target}_final_threshold",
+                threshold=FINAL_THRESHOLDS[target],
+            )
+            row["split"] = split
+            row["target"] = target
+            row["threshold_mode"] = "final_fixed"
+            fixed_rows.append(row)
+    fixed_threshold_metrics = pd.DataFrame(fixed_rows)
+
+    metrics.to_csv(metrics_dir / f"{artifact_prefix}_metrics.csv", index=False)
+    summary.to_csv(metrics_dir / f"{artifact_prefix}_training_summary.csv", index=False)
+    fixed_threshold_metrics.to_csv(
+        metrics_dir / f"{artifact_prefix}_final_threshold_metrics.csv",
+        index=False,
+    )
+    return {
+        "metrics": metrics,
+        "training_summary": summary,
+        "final_threshold_metrics": fixed_threshold_metrics,
+        "selected_features": selected,
     }

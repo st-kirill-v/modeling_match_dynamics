@@ -949,6 +949,34 @@ def show_football_metrics() -> None:
         with st.expander("Feature ranking by aggregate absolute correlation"):
             st.dataframe(ablation_ranking, use_container_width=True, height=520)
 
+    top50_retrain_metrics = load_football_metric_table("top50_retrain_metrics.csv")
+    top50_retrain_final = load_football_metric_table("top50_retrain_final_threshold_metrics.csv")
+    top50_retrain_summary = load_football_metric_table("top50_retrain_training_summary.csv")
+    top50_retrain_history = load_football_metric_table("top50_retrain_top_50_history.csv")
+    if not top50_retrain_metrics.empty:
+        st.subheader("Top-50 LSTM retrain")
+        st.caption("Fresh retrain of the selected top-50 feature model.")
+        st.dataframe(top50_retrain_metrics, use_container_width=True, height=320)
+    if not top50_retrain_final.empty:
+        st.markdown("**Top-50 retrain with final fixed thresholds**")
+        st.dataframe(top50_retrain_final, use_container_width=True, height=320)
+    if not top50_retrain_summary.empty:
+        st.dataframe(top50_retrain_summary, use_container_width=True)
+    if not top50_retrain_history.empty:
+        loss_cols = [c for c in ["loss", "val_loss"] if c in top50_retrain_history]
+        if loss_cols:
+            hist_long = top50_retrain_history.melt(
+                id_vars="epoch", value_vars=loss_cols, var_name="curve", value_name="value"
+            )
+            fig = px.line(
+                hist_long,
+                x="epoch",
+                y="value",
+                color="curve",
+                title="Top-50 retrain loss",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
     threshold_best = load_football_metric_table("threshold_tuning/best_thresholds.csv")
     threshold_metrics = load_football_metric_table("threshold_tuning/threshold_metrics.csv")
     threshold_comparison = load_football_metric_table(
