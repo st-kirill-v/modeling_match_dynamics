@@ -845,6 +845,15 @@ def show_football_metrics() -> None:
     lstm_shapes = load_football_metric_table("baseline_lstm_shapes.csv")
     overfit = load_football_metric_table("baseline_lstm_overfitting_report.csv")
     confusion = load_football_metric_table("baseline_lstm_confusion_matrices.csv")
+    ablation_comparison = load_football_metric_table("feature_ablation_fast_comparison.csv")
+    ablation_summary = load_football_metric_table("feature_ablation_fast_training_summary.csv")
+    ablation_ranking = load_football_metric_table("feature_ablation_fast_feature_ranking.csv")
+    if ablation_comparison.empty:
+        ablation_comparison = load_football_metric_table("feature_ablation_comparison.csv")
+    if ablation_summary.empty:
+        ablation_summary = load_football_metric_table("feature_ablation_training_summary.csv")
+    if ablation_ranking.empty:
+        ablation_ranking = load_football_metric_table("feature_ablation_feature_ranking.csv")
 
     if not lstm_metrics.empty:
         st.subheader("Baseline multi-output LSTM metrics")
@@ -912,6 +921,33 @@ def show_football_metrics() -> None:
                     title=f"Confusion matrix: {target}",
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+    if not ablation_comparison.empty:
+        st.subheader("Feature-count ablation")
+        st.dataframe(ablation_comparison, use_container_width=True, height=420)
+        metric = st.selectbox(
+            "Ablation metric",
+            [c for c in ["pr_auc", "roc_auc", "f1", "mae", "mse"] if c in ablation_comparison],
+            key="football_ablation_metric_select",
+        )
+        fig = px.bar(
+            ablation_comparison.sort_values(metric, ascending=False),
+            x=metric,
+            y="feature_set",
+            color="target",
+            barmode="group",
+            orientation="h",
+            title=f"Feature-count ablation by {metric}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    if not ablation_summary.empty:
+        st.subheader("Feature-count ablation training summary")
+        st.dataframe(ablation_summary, use_container_width=True)
+
+    if not ablation_ranking.empty:
+        with st.expander("Feature ranking by aggregate absolute correlation"):
+            st.dataframe(ablation_ranking, use_container_width=True, height=520)
 
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
