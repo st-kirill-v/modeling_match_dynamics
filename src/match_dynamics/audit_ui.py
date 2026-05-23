@@ -825,6 +825,58 @@ def show_model_metrics() -> None:
         st.plotly_chart(fig, use_container_width=True)
 
 
+def show_football_metrics() -> None:
+    st.header("Football Metrics")
+    st.caption(
+        "Sequence dataset diagnostics now; model metrics will be added here after LSTM training."
+    )
+
+    diagnostics = load_report_table("football_sequence_diagnostics.csv")
+    target_dist = load_report_table("football_sequence_target_distribution.csv")
+    seq_stats = load_report_table("football_sequence_sequence_length_stats.csv")
+    features = load_report_table("football_sequence_feature_columns.csv")
+    excluded = load_report_table("football_sequence_excluded_columns.csv")
+    target_checks = load_report_table("football_sequence_target_checks.csv")
+
+    if diagnostics.empty:
+        st.info(
+            "Football sequence reports are not ready. Run `uv run python scripts/build_football_sequences.py`."
+        )
+        return
+
+    st.subheader("Sequence diagnostics")
+    st.dataframe(diagnostics, use_container_width=True)
+
+    st.subheader("Target checks")
+    st.dataframe(target_checks, use_container_width=True)
+
+    st.subheader("Target distribution")
+    st.dataframe(target_dist, use_container_width=True)
+    if not target_dist.empty:
+        fig = px.bar(
+            target_dist,
+            x="value",
+            y="matches",
+            color="target",
+            facet_col="split",
+            barmode="group",
+            title="Football Target Distribution By Split",
+            text="matches",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Sequence length stats")
+    st.dataframe(seq_stats, use_container_width=True)
+
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.subheader("Feature columns")
+        st.dataframe(features, use_container_width=True, height=520)
+    with col_right:
+        st.subheader("Excluded leakage / metadata columns")
+        st.dataframe(excluded, use_container_width=True, height=520)
+
+
 def refresh_audit() -> None:
     cmd = [sys.executable, str(PROJECT_ROOT / "scripts" / "audit_data_quality.py")]
     completed = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False, capture_output=True, text=True)
@@ -862,6 +914,7 @@ def main() -> None:
                 "NBA Join Quality",
                 "Feature Engineering",
                 "Correlations",
+                "Football Metrics",
                 "Model Metrics",
             ],
         )
@@ -888,6 +941,8 @@ def main() -> None:
         show_feature_engineering()
     elif page == "Correlations":
         show_correlations()
+    elif page == "Football Metrics":
+        show_football_metrics()
     elif page == "Model Metrics":
         show_model_metrics()
 
