@@ -205,6 +205,32 @@ def show_football_merge() -> None:
         st.dataframe(merged_head, use_container_width=True, height=560)
 
     show_head_table("football_merged_head.csv", "Compact merged preview: key columns")
+
+    st.subheader("Merged columns: data types and quality")
+    if profile.empty:
+        st.warning("Профиль колонок merge не найден.")
+    else:
+        dtype_cols = [
+            c
+            for c in [
+                "column",
+                "dtype",
+                "non_null",
+                "missing",
+                "missing_rate",
+                "n_unique",
+                "zero_count",
+                "zero_rate",
+                "mean",
+                "std",
+                "min",
+                "median",
+                "max",
+            ]
+            if c in profile.columns
+        ]
+        st.dataframe(profile[dtype_cols], use_container_width=True, height=520)
+
     show_missing_bar(profile, "Football Merged: Top Missing Columns")
     show_dtype_bar(profile, "Football Merged: Column Types")
 
