@@ -10,6 +10,7 @@ import pandas as pd
 from .config import ProjectConfig
 from .data_loading import ensure_football_events
 from .football import preprocess_football_events
+from .football_event_processing import save_football_merged_processed_outputs
 from .football_merge import (
     build_football_event_match_merge,
     football_merge_summary,
@@ -295,6 +296,30 @@ def run_data_audit(cfg: ProjectConfig, audit_cfg: AuditConfig) -> Path:
                 "football_merged_head.csv",
                 "football_merged_event_match_columns.csv",
                 "football_merged_event_match_head.csv",
+            ]
+        )
+        football_processed_path = cfg.data_dir / "football_merged_processed.csv"
+        football_processed, _ = save_football_merged_processed_outputs(
+            input_path=football_merged_path,
+            output_path=football_processed_path,
+            audit_dir=audit_cfg.output_dir,
+        )
+        overviews.append(
+            save_dataset_audit(
+                "football_merged_processed",
+                football_processed,
+                audit_cfg.output_dir,
+                audit_cfg.sample_rows,
+            )
+        )
+        report_files.extend(
+            [
+                "football_merged_processed_binary_validation.csv",
+                "football_merged_processed_columns.csv",
+                "football_merged_processed_feature_log.csv",
+                "football_merged_processed_head.csv",
+                "football_merged_processed_new_features_head.csv",
+                "football_merged_processed_summary.csv",
             ]
         )
 

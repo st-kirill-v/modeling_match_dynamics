@@ -238,6 +238,117 @@ def show_football_merge() -> None:
     show_profile_table(profile)
 
 
+def show_football_merged_processed() -> None:
+    st.header("Football Merged Processed")
+    st.caption(
+        "Event-level processing built from data/football_merged.csv. "
+        "No aggregation, dictionary mapping, LSTM features, or global NaN fill are applied here."
+    )
+
+    summary = load_table("football_merged_processed_summary.csv")
+    feature_log = load_table("football_merged_processed_feature_log.csv")
+    validation = load_table("football_merged_processed_binary_validation.csv")
+    new_features_head = load_table("football_merged_processed_new_features_head.csv")
+    profile = load_table("football_merged_processed_columns.csv")
+
+    if summary.empty:
+        st.warning("Processed merge tables not found. Click `Refresh audit tables` in the sidebar.")
+        return
+
+    st.subheader("Transformation summary")
+    st.dataframe(summary, use_container_width=True)
+    summary_map = dict(zip(summary["metric"], summary["value"], strict=False))
+    cols = st.columns(4)
+    cols[0].metric(
+        "Input shape",
+        f"{int(summary_map.get('input_rows', 0))} x {int(summary_map.get('input_columns', 0))}",
+    )
+    cols[1].metric(
+        "Output shape",
+        f"{int(summary_map.get('output_rows', 0))} x {int(summary_map.get('output_columns', 0))}",
+    )
+    cols[2].metric("Created features", int(summary_map.get("created_features_count", 0)))
+    cols[3].metric("Dropped columns", int(summary_map.get("dropped_columns_count", 0)))
+
+    st.subheader("Feature engineering log")
+    action_filter = st.multiselect(
+        "Filter actions",
+        sorted(feature_log["action"].dropna().unique().tolist()) if not feature_log.empty else [],
+        default=sorted(feature_log["action"].dropna().unique().tolist())
+        if not feature_log.empty
+        else [],
+    )
+    log_view = feature_log
+    if action_filter:
+        log_view = feature_log[feature_log["action"].isin(action_filter)]
+    st.dataframe(log_view, use_container_width=True, height=360)
+
+    st.subheader("Binary feature validation")
+    st.dataframe(validation, use_container_width=True, height=420)
+    if not validation.empty:
+        valid_count = int(validation["valid_0_1_only"].sum())
+        st.metric("Valid binary features", f"{valid_count}/{len(validation)}")
+        fig = px.bar(
+            validation,
+            x="feature",
+            y="null_count",
+            color="valid_0_1_only",
+            title="Created Binary Features: Null Count And 0/1 Validation",
+        )
+        fig.update_layout(xaxis_tickangle=-35)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("First 5 rows of new features")
+    st.dataframe(new_features_head, use_container_width=True, height=240)
+
+    st.subheader("Processed event-level head() with all columns")
+    head_rows = st.slider(
+        "Rows to show from data/football_merged_processed.csv",
+        5,
+        200,
+        30,
+        key="football_merged_processed_head_rows",
+    )
+    processed_head = read_csv_head(
+        str(PROJECT_ROOT / "data" / "football_merged_processed.csv"), head_rows
+    )
+    if processed_head.empty:
+        st.warning("data/football_merged_processed.csv not found. Run processing or refresh audit.")
+    else:
+        st.dataframe(processed_head, use_container_width=True, height=560)
+
+    st.subheader("Processed columns: data types and quality")
+    if profile.empty:
+        st.warning("Processed column profile not found.")
+    else:
+        dtype_cols = [
+            c
+            for c in [
+                "column",
+                "dtype",
+                "non_null",
+                "missing",
+                "missing_rate",
+                "n_unique",
+                "zero_count",
+                "zero_rate",
+                "mean",
+                "std",
+                "min",
+                "median",
+                "max",
+            ]
+            if c in profile.columns
+        ]
+        st.dataframe(profile[dtype_cols], use_container_width=True, height=520)
+
+    show_missing_bar(profile, "Football Merged Processed: Top Missing Columns")
+    show_dtype_bar(profile, "Football Merged Processed: Column Types")
+
+    st.subheader("Full processed column profile")
+    show_profile_table(profile)
+
+
 def show_football_processed() -> None:
     st.header("Football Processed")
     level = st.radio(
@@ -530,6 +641,7 @@ def main() -> None:
                 "Overview",
                 "Football Raw",
                 "Football Merge",
+                "Football Merged Processed",
                 "Football Processed",
                 "NBA Raw",
                 "NBA Processed",
@@ -546,6 +658,8 @@ def main() -> None:
         show_football_raw()
     elif page == "Football Merge":
         show_football_merge()
+    elif page == "Football Merged Processed":
+        show_football_merged_processed()
     elif page == "Football Processed":
         show_football_processed()
     elif page == "NBA Raw":
