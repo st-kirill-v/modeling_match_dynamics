@@ -131,6 +131,11 @@ def load_metric_table(name: str) -> pd.DataFrame:
     return read_csv(str(path), file_signature(path))
 
 
+def load_football_metric_table(name: str) -> pd.DataFrame:
+    path = METRICS_DIR / "football" / name
+    return read_csv(str(path), file_signature(path))
+
+
 def load_report_table(name: str) -> pd.DataFrame:
     path = REPORTS_DIR / name
     return read_csv(str(path), file_signature(path))
@@ -827,9 +832,7 @@ def show_model_metrics() -> None:
 
 def show_football_metrics() -> None:
     st.header("Football Metrics")
-    st.caption(
-        "Sequence dataset diagnostics now; model metrics will be added here after LSTM training."
-    )
+    st.caption("Sequence dataset diagnostics and baseline multi-output LSTM metrics.")
 
     diagnostics = load_report_table("football_sequence_diagnostics.csv")
     target_dist = load_report_table("football_sequence_target_distribution.csv")
@@ -837,6 +840,68 @@ def show_football_metrics() -> None:
     features = load_report_table("football_sequence_feature_columns.csv")
     excluded = load_report_table("football_sequence_excluded_columns.csv")
     target_checks = load_report_table("football_sequence_target_checks.csv")
+    lstm_metrics = load_football_metric_table("baseline_lstm_metrics.csv")
+    lstm_history = load_football_metric_table("baseline_lstm_history.csv")
+    lstm_shapes = load_football_metric_table("baseline_lstm_shapes.csv")
+    overfit = load_football_metric_table("baseline_lstm_overfitting_report.csv")
+
+    if not lstm_metrics.empty:
+        st.subheader("Baseline multi-output LSTM metrics")
+        st.dataframe(lstm_metrics, use_container_width=True, height=420)
+        metric = st.selectbox(
+            "Metric",
+            [
+                c
+                for c in ["pr_auc", "roc_auc", "f1", "precision", "recall", "brier", "mae", "mse"]
+                if c in lstm_metrics
+            ],
+            key="football_lstm_metric_select",
+        )
+        fig = px.bar(
+            lstm_metrics.sort_values(metric, ascending=False),
+            x=metric,
+            y="target",
+            color="split",
+            barmode="group",
+            orientation="h",
+            title=f"Baseline Football LSTM by {metric}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    if not lstm_history.empty:
+        st.subheader("Training history")
+        st.dataframe(lstm_history, use_container_width=True, height=320)
+        loss_cols = [
+            c
+            for c in ["loss", "val_loss", "home_output_loss", "away_output_loss"]
+            if c in lstm_history
+        ]
+        hist_long = lstm_history.melt(
+            id_vars="epoch", value_vars=loss_cols, var_name="curve", value_name="value"
+        )
+        fig = px.line(
+            hist_long, x="epoch", y="value", color="curve", title="Train / Validation Loss"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
+    loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
+    if loss_fig.exists():
+        st.subheader("Saved figures")
+        st.image(str(loss_fig), caption="Train/validation loss curves", use_container_width=True)
+        figure_files = sorted(figures_dir.glob("test_*_*.png"))
+        cols = st.columns(2)
+        for idx, fig_path in enumerate(figure_files):
+            with cols[idx % 2]:
+                st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
+
+    if not lstm_shapes.empty:
+        st.subheader("LSTM tensor shapes")
+        st.dataframe(lstm_shapes, use_container_width=True)
+
+    if not overfit.empty:
+        st.subheader("Overfitting analysis")
+        st.dataframe(overfit, use_container_width=True)
 
     if diagnostics.empty:
         st.info(
