@@ -197,6 +197,33 @@ def save_evaluation_figures(
         )
 
 
+def confusion_matrix_rows(
+    split: str,
+    y_home: np.ndarray,
+    y_away: np.ndarray,
+    prob_home: np.ndarray,
+    prob_away: np.ndarray,
+) -> list[dict]:
+    rows = []
+    for target, y_true, prob in [
+        ("home_scores_next_half", y_home, prob_home),
+        ("away_scores_next_half", y_away, prob_away),
+    ]:
+        matrix = confusion_matrix(y_true, (prob >= THRESHOLD).astype(int), labels=[0, 1])
+        for true_label in [0, 1]:
+            for predicted_label in [0, 1]:
+                rows.append(
+                    {
+                        "split": split,
+                        "target": target,
+                        "true_label": true_label,
+                        "predicted_label": predicted_label,
+                        "count": int(matrix[true_label, predicted_label]),
+                    }
+                )
+    return rows
+
+
 def overfitting_report(
     history: tf.keras.callbacks.History, metrics_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -284,6 +311,7 @@ def train_baseline_football_lstm(
     plot_loss_curves(history, figures_dir / "baseline_lstm_loss_curves.png")
 
     metric_rows = []
+    confusion_rows = []
     predictions = {}
     for split, X, y_home, y_away in [
         ("train", X_train, y_train_home, y_train_away),
@@ -294,6 +322,15 @@ def train_baseline_football_lstm(
         predictions[split] = pred
         metric_rows.extend(
             evaluate_split(
+                split,
+                y_home,
+                y_away,
+                pred["home_scores_next_half"],
+                pred["away_scores_next_half"],
+            )
+        )
+        confusion_rows.extend(
+            confusion_matrix_rows(
                 split,
                 y_home,
                 y_away,
@@ -333,6 +370,8 @@ def train_baseline_football_lstm(
         ]
     ]
     metrics_df.to_csv(metrics_dir / "baseline_lstm_metrics.csv", index=False)
+    confusion_df = pd.DataFrame(confusion_rows)
+    confusion_df.to_csv(metrics_dir / "baseline_lstm_confusion_matrices.csv", index=False)
 
     shapes = pd.DataFrame(
         [
@@ -350,6 +389,7 @@ def train_baseline_football_lstm(
     overfit.to_csv(metrics_dir / "baseline_lstm_overfitting_report.csv", index=False)
     return {
         "metrics": metrics_df,
+        "confusion": confusion_df,
         "history": pd.DataFrame(history.history),
         "shapes": shapes,
         "overfitting": overfit,

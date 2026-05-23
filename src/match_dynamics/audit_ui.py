@@ -844,6 +844,7 @@ def show_football_metrics() -> None:
     lstm_history = load_football_metric_table("baseline_lstm_history.csv")
     lstm_shapes = load_football_metric_table("baseline_lstm_shapes.csv")
     overfit = load_football_metric_table("baseline_lstm_overfitting_report.csv")
+    confusion = load_football_metric_table("baseline_lstm_confusion_matrices.csv")
 
     if not lstm_metrics.empty:
         st.subheader("Baseline multi-output LSTM metrics")
@@ -883,6 +884,34 @@ def show_football_metrics() -> None:
             hist_long, x="epoch", y="value", color="curve", title="Train / Validation Loss"
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    if not confusion.empty:
+        st.subheader("Confusion matrices")
+        st.dataframe(confusion, use_container_width=True, height=260)
+        split_values = sorted(confusion["split"].unique().tolist())
+        split = st.selectbox(
+            "Confusion matrix split",
+            split_values,
+            index=split_values.index("test") if "test" in split_values else 0,
+            key="football_confusion_split",
+        )
+        cols = st.columns(2)
+        for idx, target in enumerate(["home_scores_next_half", "away_scores_next_half"]):
+            matrix_df = confusion[
+                confusion["split"].eq(split) & confusion["target"].eq(target)
+            ].pivot(index="true_label", columns="predicted_label", values="count")
+            matrix_df = matrix_df.reindex(index=[0, 1], columns=[0, 1]).fillna(0).astype(int)
+            with cols[idx]:
+                st.markdown(f"**{split}: {target}**")
+                st.dataframe(matrix_df, use_container_width=True)
+                fig = px.imshow(
+                    matrix_df,
+                    text_auto=True,
+                    color_continuous_scale="Blues",
+                    labels={"x": "Predicted", "y": "True", "color": "Count"},
+                    title=f"Confusion matrix: {target}",
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
