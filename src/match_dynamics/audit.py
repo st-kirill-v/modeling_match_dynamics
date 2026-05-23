@@ -320,6 +320,20 @@ def run_data_audit(cfg: ProjectConfig, audit_cfg: AuditConfig) -> Path:
                 "football_merged_processed_head.csv",
                 "football_merged_processed_new_features_head.csv",
                 "football_merged_processed_summary.csv",
+                "football_merged_processed_second_pass_summary.csv",
+                "football_merged_processed_second_pass_log.csv",
+                "football_merged_processed_second_pass_binary_validation.csv",
+                "football_merged_processed_second_pass_new_features_head.csv",
+                "football_merged_processed_impossible_values.csv",
+                "football_merged_processed_duplicate_summary.csv",
+                "football_merged_processed_duplicate_id_event_report.csv",
+                "football_merged_processed_temporal_consistency.csv",
+                "football_merged_processed_event_flag_counts.csv",
+                "football_merged_processed_side_event_counts.csv",
+                "football_merged_processed_goals_by_side.csv",
+                "football_merged_processed_events_per_match_stats.csv",
+                "football_merged_processed_time_distribution.csv",
+                "football_merged_processed_duplicate_feature_checks.csv",
             ]
         )
 

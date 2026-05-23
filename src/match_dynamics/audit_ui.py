@@ -246,9 +246,25 @@ def show_football_merged_processed() -> None:
     )
 
     summary = load_table("football_merged_processed_summary.csv")
+    second_summary = load_table("football_merged_processed_second_pass_summary.csv")
     feature_log = load_table("football_merged_processed_feature_log.csv")
+    second_log = load_table("football_merged_processed_second_pass_log.csv")
     validation = load_table("football_merged_processed_binary_validation.csv")
+    second_validation = load_table("football_merged_processed_second_pass_binary_validation.csv")
     new_features_head = load_table("football_merged_processed_new_features_head.csv")
+    second_new_features_head = load_table(
+        "football_merged_processed_second_pass_new_features_head.csv"
+    )
+    impossible = load_table("football_merged_processed_impossible_values.csv")
+    duplicate_summary = load_table("football_merged_processed_duplicate_summary.csv")
+    duplicate_id_event = load_table("football_merged_processed_duplicate_id_event_report.csv")
+    temporal = load_table("football_merged_processed_temporal_consistency.csv")
+    event_counts = load_table("football_merged_processed_event_flag_counts.csv")
+    side_counts = load_table("football_merged_processed_side_event_counts.csv")
+    goals_side = load_table("football_merged_processed_goals_by_side.csv")
+    events_per_match = load_table("football_merged_processed_events_per_match_stats.csv")
+    time_dist = load_table("football_merged_processed_time_distribution.csv")
+    duplicate_features = load_table("football_merged_processed_duplicate_feature_checks.csv")
     profile = load_table("football_merged_processed_columns.csv")
 
     if summary.empty:
@@ -270,6 +286,24 @@ def show_football_merged_processed() -> None:
     cols[2].metric("Created features", int(summary_map.get("created_features_count", 0)))
     cols[3].metric("Dropped columns", int(summary_map.get("dropped_columns_count", 0)))
 
+    if not second_summary.empty:
+        st.subheader("Second-pass summary: event_type, assist_method, quality checks")
+        st.dataframe(second_summary, use_container_width=True)
+        second_map = dict(zip(second_summary["metric"], second_summary["value"], strict=False))
+        cols = st.columns(4)
+        cols[0].metric(
+            "Second input shape",
+            f"{int(second_map.get('input_rows', 0))} x {int(second_map.get('input_columns', 0))}",
+        )
+        cols[1].metric(
+            "Second output shape",
+            f"{int(second_map.get('output_rows', 0))} x {int(second_map.get('output_columns', 0))}",
+        )
+        cols[2].metric("New columns", int(second_map.get("created_columns_count", 0)))
+        cols[3].metric(
+            "Impossible violations", int(second_map.get("impossible_value_violations", 0))
+        )
+
     st.subheader("Feature engineering log")
     action_filter = st.multiselect(
         "Filter actions",
@@ -282,6 +316,10 @@ def show_football_merged_processed() -> None:
     if action_filter:
         log_view = feature_log[feature_log["action"].isin(action_filter)]
     st.dataframe(log_view, use_container_width=True, height=360)
+
+    if not second_log.empty:
+        st.subheader("Second-pass log")
+        st.dataframe(second_log, use_container_width=True, height=360)
 
     st.subheader("Binary feature validation")
     st.dataframe(validation, use_container_width=True, height=420)
@@ -298,8 +336,83 @@ def show_football_merged_processed() -> None:
         fig.update_layout(xaxis_tickangle=-35)
         st.plotly_chart(fig, use_container_width=True)
 
+    if not second_validation.empty:
+        st.subheader("Second-pass binary validation")
+        st.dataframe(second_validation, use_container_width=True, height=360)
+
     st.subheader("First 5 rows of new features")
     st.dataframe(new_features_head, use_container_width=True, height=240)
+
+    if not second_new_features_head.empty:
+        st.subheader("First 5 rows of event_type / assist_method features")
+        st.dataframe(second_new_features_head, use_container_width=True, height=240)
+
+    st.subheader("Impossible values")
+    if impossible.empty:
+        st.info("Impossible values report not found.")
+    else:
+        st.dataframe(impossible, use_container_width=True, height=420)
+        fig = px.bar(
+            impossible.sort_values("violations", ascending=False).head(40),
+            x="violations",
+            y="check",
+            orientation="h",
+            color="has_warning",
+            title="Impossible Values: Violations",
+        )
+        fig.update_layout(height=700)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Duplicates and temporal consistency")
+    left, right = st.columns(2)
+    with left:
+        st.caption("Duplicate summary")
+        st.dataframe(duplicate_summary, use_container_width=True)
+    with right:
+        st.caption("Temporal consistency")
+        st.dataframe(temporal, use_container_width=True)
+    if not duplicate_id_event.empty:
+        st.warning(f"Duplicate id_event rows found: {len(duplicate_id_event)} duplicated ids.")
+        st.dataframe(duplicate_id_event.head(200), use_container_width=True, height=300)
+
+    st.subheader("Event distributions")
+    if not event_counts.empty:
+        fig = px.bar(
+            event_counts.sort_values("count"),
+            x="count",
+            y="feature",
+            orientation="h",
+            title="Event Counts By Event Type Flags",
+        )
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, use_container_width=True)
+    dist_cols = st.columns(2)
+    with dist_cols[0]:
+        st.caption("Home vs away event counts")
+        st.dataframe(side_counts, use_container_width=True)
+        if not side_counts.empty:
+            fig = px.bar(side_counts, x="side", y="count", title="Events By Side")
+            st.plotly_chart(fig, use_container_width=True)
+    with dist_cols[1]:
+        st.caption("Goals by side")
+        st.dataframe(goals_side, use_container_width=True)
+        if not goals_side.empty:
+            fig = px.bar(goals_side, x="side", y="goals", title="Goals By Side")
+            st.plotly_chart(fig, use_container_width=True)
+
+    dist_cols = st.columns(2)
+    with dist_cols[0]:
+        st.caption("Events per match stats")
+        st.dataframe(events_per_match, use_container_width=True)
+    with dist_cols[1]:
+        st.caption("Time distribution")
+        st.dataframe(time_dist, use_container_width=True)
+        if not time_dist.empty:
+            fig = px.bar(time_dist, x="time_bucket", y="count", title="Time Distribution")
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Potential duplicate features")
+    st.dataframe(duplicate_features, use_container_width=True)
 
     st.subheader("Processed event-level head() with all columns")
     head_rows = st.slider(
