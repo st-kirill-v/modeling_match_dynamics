@@ -334,6 +334,8 @@ def run_data_audit(cfg: ProjectConfig, audit_cfg: AuditConfig) -> Path:
                 "football_merged_processed_events_per_match_stats.csv",
                 "football_merged_processed_time_distribution.csv",
                 "football_merged_processed_duplicate_feature_checks.csv",
+                "football_merged_processed_minute_level_log.csv",
+                "football_merged_processed_minute_level_summary.csv",
             ]
         )
 

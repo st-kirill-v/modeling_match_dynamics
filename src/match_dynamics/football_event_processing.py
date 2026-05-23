@@ -72,6 +72,39 @@ ASSIST_METHOD_FEATURES = {
     "assist_through_ball": 4,
 }
 
+HOME_AWAY_SPLIT_FEATURES = {
+    "is_attempt": "attempt",
+    "is_corner": "corner",
+    "is_foul": "foul",
+    "is_yellow_card": "yellow_card",
+    "is_red_card": "red_card",
+    "is_free_kick_won": "free_kick_won",
+    "is_offside": "offside",
+    "is_hand_ball": "hand_ball",
+    "is_penalty_conceded": "penalty_conceded",
+    "is_key_pass": "key_pass",
+    "is_own_goal": "own_goal",
+    "is_on_target": "on_target",
+    "is_off_target": "off_target",
+    "is_blocked": "blocked",
+    "is_hit_bar": "hit_bar",
+    "shot_corner": "shot_corner",
+    "shot_central": "shot_central",
+    "shot_off_target": "shot_off_target",
+    "shot_hit_bar": "shot_hit_bar",
+    "shot_blocked": "shot_blocked",
+    "is_box_zone": "box_zone",
+    "is_left_wing_zone": "left_wing_zone",
+    "is_right_wing_zone": "right_wing_zone",
+    "is_long_range_zone": "long_range_zone",
+    "is_attacking_half": "attacking_half",
+    "is_difficult_angle": "difficult_angle",
+    "assist_pass": "assist_pass",
+    "assist_cross": "assist_cross",
+    "assist_headed_pass": "assist_headed_pass",
+    "assist_through_ball": "assist_through_ball",
+}
+
 DROP_COLUMNS = [
     "player_in",
     "player_out",
@@ -110,6 +143,21 @@ COMMENT_ROWS = [
             "so missing source values naturally become 0 when the specific event condition is absent."
         ),
     },
+]
+
+MINUTE_METADATA_COLUMNS = [
+    "date",
+    "league",
+    "season",
+    "country",
+    "ht",
+    "at",
+    "fthg",
+    "ftag",
+    "odd_h",
+    "odd_d",
+    "odd_a",
+    "final_score",
 ]
 
 
@@ -478,6 +526,145 @@ def duplicate_feature_checks(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_minute_level_from_processed_events(
+    event_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    work = event_df.copy()
+    created: list[str] = []
+    dropped: list[str] = []
+
+    if "text" in work.columns:
+        work = work.drop(columns=["text"])
+        dropped.append("text")
+
+    side = (
+        pd.to_numeric(work["side"], errors="coerce")
+        if "side" in work.columns
+        else pd.Series(pd.NA, index=work.index)
+    )
+
+    for source_col, base_name in HOME_AWAY_SPLIT_FEATURES.items():
+        if source_col not in work.columns:
+            continue
+        source = pd.to_numeric(work[source_col], errors="coerce").fillna(0)
+        home_col = f"home_{base_name}"
+        away_col = f"away_{base_name}"
+        work[home_col] = source.where(side.eq(1), 0).astype("int16")
+        work[away_col] = source.where(side.eq(2), 0).astype("int16")
+        created.extend([home_col, away_col])
+
+    if "is_goal" in work.columns:
+        goal = pd.to_numeric(work["is_goal"], errors="coerce").fillna(0)
+        work["home_goal"] = goal.where(side.eq(1), 0).astype("int16")
+        work["away_goal"] = goal.where(side.eq(2), 0).astype("int16")
+        created.extend(["home_goal", "away_goal"])
+
+    split_source_cols = [col for col in HOME_AWAY_SPLIT_FEATURES if col in work.columns]
+    if split_source_cols:
+        work = work.drop(columns=split_source_cols)
+        dropped.extend(split_source_cols)
+
+    work["time"] = pd.to_numeric(work["time"], errors="coerce").astype("Int64")
+    work = work.dropna(subset=["id_odsp", "time"]).copy()
+    work["time"] = work["time"].astype(int)
+
+    second_half = work[work["time"].gt(45)]
+    targets = second_half.groupby("id_odsp", as_index=False).agg(
+        second_half_home_goals=("home_goal", "sum"),
+        second_half_away_goals=("away_goal", "sum"),
+    )
+    targets["home_scores_next_half"] = targets["second_half_home_goals"].gt(0).astype("int8")
+    targets["away_scores_next_half"] = targets["second_half_away_goals"].gt(0).astype("int8")
+
+    first_half = work[work["time"].between(1, 45)].copy()
+    count_cols = [col for col in created if col in first_half.columns]
+    agg_spec = {col: (col, "sum") for col in count_cols}
+    for col in [c for c in MINUTE_METADATA_COLUMNS if c in first_half.columns]:
+        agg_spec[col] = (col, "first")
+
+    minute = first_half.groupby(["id_odsp", "time"], as_index=False).agg(**agg_spec)
+
+    match_ids = pd.Index(work["id_odsp"].dropna().unique(), name="id_odsp")
+    full_index = pd.MultiIndex.from_product([match_ids, range(1, 46)], names=["id_odsp", "time"])
+    minute = (
+        minute.set_index(["id_odsp", "time"])
+        .reindex(full_index)
+        .reset_index()
+        .sort_values(["id_odsp", "time"], kind="mergesort")
+    )
+
+    for col in count_cols:
+        minute[col] = minute[col].fillna(0).astype("int16")
+
+    metadata = work.sort_values(["id_odsp", "time"], kind="mergesort").drop_duplicates("id_odsp")[
+        ["id_odsp", *[c for c in MINUTE_METADATA_COLUMNS if c in work.columns]]
+    ]
+    metadata_cols = [c for c in metadata.columns if c != "id_odsp"]
+    if metadata_cols:
+        minute = minute.drop(columns=[c for c in metadata_cols if c in minute.columns])
+        minute = minute.merge(metadata, on="id_odsp", how="left")
+
+    minute = minute.merge(targets, on="id_odsp", how="left")
+    target_cols = [
+        "second_half_home_goals",
+        "second_half_away_goals",
+        "home_scores_next_half",
+        "away_scores_next_half",
+    ]
+    for col in target_cols:
+        minute[col] = minute[col].fillna(0).astype("int16" if "goals" in col else "int8")
+
+    if {"home_goal", "away_goal"}.issubset(minute.columns):
+        minute["home_score_first_half_so_far"] = minute.groupby("id_odsp")["home_goal"].cumsum()
+        minute["away_score_first_half_so_far"] = minute.groupby("id_odsp")["away_goal"].cumsum()
+        minute["score_diff_first_half_so_far"] = (
+            minute["home_score_first_half_so_far"] - minute["away_score_first_half_so_far"]
+        )
+
+    log = pd.DataFrame(
+        [{"action": "created", "column": col} for col in created]
+        + [{"action": "dropped", "column": col} for col in dropped]
+        + [
+            {
+                "action": "created",
+                "column": "minute_grid_1_45",
+                "details": "Added every minute 1-45 for each match; missing event counts are 0.",
+            },
+            {
+                "action": "created",
+                "column": "home_scores_next_half / away_scores_next_half",
+                "details": "Targets computed from second-half goals before filtering to first-half minutes.",
+            },
+        ]
+    )
+    return minute, log
+
+
+def minute_level_summary(
+    input_df: pd.DataFrame,
+    output_df: pd.DataFrame,
+    log: pd.DataFrame,
+    saved_path: Path,
+) -> pd.DataFrame:
+    created = log.loc[log["action"].eq("created"), "column"].dropna().tolist()
+    dropped = log.loc[log["action"].eq("dropped"), "column"].dropna().tolist()
+    matches = output_df["id_odsp"].nunique(dropna=True) if "id_odsp" in output_df else 0
+    complete_grid_rows = matches * 45
+    return pd.DataFrame(
+        [
+            {"metric": "input_event_rows", "value": input_df.shape[0]},
+            {"metric": "input_event_columns", "value": input_df.shape[1]},
+            {"metric": "output_minute_rows", "value": output_df.shape[0]},
+            {"metric": "output_minute_columns", "value": output_df.shape[1]},
+            {"metric": "unique_matches", "value": matches},
+            {"metric": "expected_first_half_grid_rows", "value": complete_grid_rows},
+            {"metric": "created_columns_count", "value": len(created)},
+            {"metric": "dropped_columns_count", "value": len(dropped)},
+            {"metric": "saved_path", "value": str(saved_path)},
+        ]
+    )
+
+
 def processing_summary(
     input_df: pd.DataFrame,
     output_df: pd.DataFrame,
@@ -542,16 +729,18 @@ def save_football_merged_processed_outputs(
         raise FileNotFoundError(f"football_merged.csv was not found: {input_path}")
     input_df = pd.read_csv(input_path)
     first_pass_df, first_log = process_football_merged_events(input_df)
-    output_df, second_log = process_event_type_assist_and_quality(first_pass_df)
-    log = pd.concat([first_log, second_log], ignore_index=True)
+    event_df, second_log = process_event_type_assist_and_quality(first_pass_df)
+    output_df, minute_log = build_minute_level_from_processed_events(event_df)
+    log = pd.concat([first_log, second_log, minute_log], ignore_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_df.to_csv(output_path, index=False)
 
     created_cols = (
         log.loc[log["action"].isin(["created", "updated"]), "column"].dropna().unique().tolist()
     )
-    validation = binary_feature_validation(output_df, created_cols)
-    if not validation["valid_0_1_only"].all():
+    binary_cols = binary_columns(output_df)
+    validation = binary_feature_validation(output_df, binary_cols)
+    if not validation.empty and not validation["valid_0_1_only"].all():
         invalid = validation.loc[~validation["valid_0_1_only"], "feature"].tolist()
         raise ValueError(f"Non-binary values found in created features: {invalid}")
 
@@ -564,11 +753,16 @@ def save_football_merged_processed_outputs(
         validation.to_csv(
             audit_dir / "football_merged_processed_binary_validation.csv", index=False
         )
-        output_df[created_cols].head(5).to_csv(
+        preview_cols = [col for col in created_cols if col in output_df.columns]
+        output_df[preview_cols].head(5).to_csv(
             audit_dir / "football_merged_processed_new_features_head.csv", index=False
         )
         output_df.head(20).to_csv(audit_dir / "football_merged_processed_head.csv", index=False)
-        save_second_pass_reports(first_pass_df, output_df, second_log, output_path, audit_dir)
+        save_second_pass_reports(first_pass_df, event_df, second_log, output_path, audit_dir)
+        minute_log.to_csv(audit_dir / "football_merged_processed_minute_level_log.csv", index=False)
+        minute_level_summary(event_df, output_df, minute_log, output_path).to_csv(
+            audit_dir / "football_merged_processed_minute_level_summary.csv", index=False
+        )
     return output_df, log
 
 

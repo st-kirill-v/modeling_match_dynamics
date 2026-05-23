@@ -314,7 +314,7 @@ def show_football_merge() -> None:
 def show_football_merged_processed() -> None:
     st.header("Football Merged Processed: football_merged_processed.csv")
     st.caption(
-        "Same view structure as Football Merge, but using the processed event-level dataset."
+        "Same view structure as Football Merge, but using the processed minute-level dataset."
     )
 
     processed_path = PROJECT_ROOT / "data" / "football_merged_processed.csv"
@@ -337,7 +337,7 @@ def show_football_merged_processed() -> None:
     cols[2].metric("Unique matches", int(processed_row["unique_matches"]))
     cols[3].metric("Null match ids", int(processed_row["null_id_odsp"]))
 
-    st.subheader("Processed event-level head() with all columns")
+    st.subheader("Processed minute-level head() with all columns")
     head_rows = st.slider(
         "Rows to show from data/football_merged_processed.csv",
         5,
@@ -349,7 +349,7 @@ def show_football_merged_processed() -> None:
     if processed_head.empty:
         st.warning("data/football_merged_processed.csv not found. Run processing or refresh audit.")
     else:
-        st.caption("First rows of the full processed event-level dataset with all columns.")
+        st.caption("First rows of the full processed minute-level dataset with all columns.")
         st.dataframe(processed_head, use_container_width=True, height=560)
 
     st.subheader("Compact processed preview: matches")
@@ -366,7 +366,7 @@ def show_football_merged_processed() -> None:
             "Processed match preview is unavailable. Refresh audit tables or rebuild processed file."
         )
     else:
-        st.caption("Each row is one match; `event_rows` is the number of processed events in it.")
+        st.caption("Each row is one match; `event_rows` is the number of first-half minute rows.")
         st.dataframe(match_preview, use_container_width=True, height=460)
 
     st.subheader("Processed columns: data types and quality")
@@ -396,52 +396,6 @@ def show_football_merged_processed() -> None:
 
     show_missing_bar(profile, "Football Merged Processed: Top Missing Columns")
     show_dtype_bar(profile, "Football Merged Processed: Column Types")
-
-    with st.expander("Processing diagnostics"):
-        second_summary = load_table("football_merged_processed_second_pass_summary.csv")
-        feature_log = load_table("football_merged_processed_feature_log.csv")
-        second_log = load_table("football_merged_processed_second_pass_log.csv")
-        validation = load_table("football_merged_processed_binary_validation.csv")
-        second_validation = load_table(
-            "football_merged_processed_second_pass_binary_validation.csv"
-        )
-        impossible = load_table("football_merged_processed_impossible_values.csv")
-        duplicate_summary = load_table("football_merged_processed_duplicate_summary.csv")
-        temporal = load_table("football_merged_processed_temporal_consistency.csv")
-        duplicate_features = load_table("football_merged_processed_duplicate_feature_checks.csv")
-
-        if not second_summary.empty:
-            st.caption("Second-pass summary")
-            st.dataframe(second_summary, use_container_width=True)
-        cols = st.columns(4)
-        if not second_summary.empty:
-            second_map = dict(zip(second_summary["metric"], second_summary["value"], strict=False))
-            cols[0].metric("Created", int(second_map.get("created_columns_count", 0)))
-            cols[1].metric("Updated", int(second_map.get("updated_columns_count", 0)))
-            cols[2].metric("Dropped", int(second_map.get("dropped_columns_count", 0)))
-            cols[3].metric("Impossible", int(second_map.get("impossible_value_violations", 0)))
-
-        st.caption("Feature engineering log")
-        st.dataframe(feature_log, use_container_width=True, height=240)
-        if not second_log.empty:
-            st.caption("Second-pass log")
-            st.dataframe(second_log, use_container_width=True, height=240)
-        st.caption("Binary validation")
-        st.dataframe(validation, use_container_width=True, height=240)
-        if not second_validation.empty:
-            st.caption("Second-pass binary validation")
-            st.dataframe(second_validation, use_container_width=True, height=240)
-        st.caption("Impossible values")
-        st.dataframe(impossible, use_container_width=True, height=240)
-        left, right = st.columns(2)
-        with left:
-            st.caption("Duplicate summary")
-            st.dataframe(duplicate_summary, use_container_width=True)
-        with right:
-            st.caption("Temporal consistency")
-            st.dataframe(temporal, use_container_width=True)
-        st.caption("Potential duplicate features")
-        st.dataframe(duplicate_features, use_container_width=True)
 
 
 def show_football_processed() -> None:
