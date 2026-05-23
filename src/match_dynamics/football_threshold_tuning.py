@@ -20,6 +20,10 @@ PRECISION_CONSTRAINTS = {
     "home_scores_next_half": 0.60,
     "away_scores_next_half": 0.55,
 }
+FINAL_THRESHOLDS = {
+    "home_scores_next_half": 0.47,
+    "away_scores_next_half": 0.39,
+}
 
 
 def load_top_feature_indices(selected_features_path: Path) -> np.ndarray:
@@ -349,4 +353,83 @@ def run_balanced_football_threshold_tuning(
         "metrics": metrics,
         "comparison": comparison,
         "balanced_test_metrics": test_metrics,
+    }
+
+
+def run_final_football_threshold_evaluation(
+    data_dir: Path,
+    models_dir: Path,
+    metrics_dir: Path,
+    selected_features_path: Path,
+    batch_size: int = 32,
+) -> dict[str, pd.DataFrame]:
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = models_dir / "feature_ablation_fast_top_50.keras"
+    if not model_path.exists():
+        raise FileNotFoundError(f"Top-50 LSTM model not found: {model_path}")
+
+    feature_indices = load_top_feature_indices(selected_features_path)
+    X_val, y_val_home, y_val_away, _ = load_sequence_npz(data_dir / "football_val_sequences.npz")
+    X_test, y_test_home, y_test_away, _ = load_sequence_npz(
+        data_dir / "football_test_sequences.npz"
+    )
+    X_val = X_val[:, :, feature_indices]
+    X_test = X_test[:, :, feature_indices]
+
+    model = tf.keras.models.load_model(model_path)
+    val_pred = _prediction_dict(model.predict(X_val, batch_size=batch_size, verbose=0))
+    test_pred = _prediction_dict(model.predict(X_test, batch_size=batch_size, verbose=0))
+
+    y_val = {
+        "home_scores_next_half": y_val_home,
+        "away_scores_next_half": y_val_away,
+    }
+    y_test = {
+        "home_scores_next_half": y_test_home,
+        "away_scores_next_half": y_test_away,
+    }
+    final_thresholds = pd.DataFrame(
+        [
+            {"target": target, "threshold": threshold}
+            for target, threshold in FINAL_THRESHOLDS.items()
+        ]
+    )
+    default_thresholds = pd.DataFrame([{"target": target, "threshold": 0.5} for target in TARGETS])
+    threshold_sets = {
+        "default_0.5": default_thresholds,
+        "final_fixed": final_thresholds,
+    }
+    validation_metrics = evaluate_threshold_modes(y_val, val_pred, threshold_sets, "val")
+    test_metrics = evaluate_threshold_modes(y_test, test_pred, threshold_sets, "test")
+    metrics = pd.concat([validation_metrics, test_metrics], ignore_index=True)
+
+    test = metrics[metrics["split"].eq("test")].copy()
+    pivot = test.set_index(["target", "threshold_mode"])
+    comparison_rows = []
+    for target in TARGETS:
+        for metric in ["precision", "recall", "f1", "accuracy"]:
+            default_value = float(pivot.loc[(target, "default_0.5"), metric])
+            final_value = float(pivot.loc[(target, "final_fixed"), metric])
+            comparison_rows.append(
+                {
+                    "target": target,
+                    "metric": metric,
+                    "threshold_0_5": default_value,
+                    "final_fixed": final_value,
+                    "delta": final_value - default_value,
+                }
+            )
+    comparison = pd.DataFrame(comparison_rows)
+
+    final_thresholds.to_csv(metrics_dir / "final_fixed_thresholds.csv", index=False)
+    metrics.to_csv(metrics_dir / "final_fixed_threshold_metrics.csv", index=False)
+    test_metrics.to_csv(metrics_dir / "final_fixed_test_metrics.csv", index=False)
+    comparison.to_csv(metrics_dir / "final_fixed_threshold_comparison.csv", index=False)
+
+    return {
+        "final_thresholds": final_thresholds,
+        "metrics": metrics,
+        "test_metrics": test_metrics,
+        "comparison": comparison,
     }

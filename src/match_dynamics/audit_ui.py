@@ -1017,6 +1017,23 @@ def show_football_metrics() -> None:
             with cols[idx % 2]:
                 st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
 
+    final_thresholds = load_football_metric_table(
+        "threshold_tuning_final/final_fixed_thresholds.csv"
+    )
+    final_metrics = load_football_metric_table(
+        "threshold_tuning_final/final_fixed_threshold_metrics.csv"
+    )
+    final_comparison = load_football_metric_table(
+        "threshold_tuning_final/final_fixed_threshold_comparison.csv"
+    )
+    if not final_thresholds.empty:
+        st.subheader("Final fixed thresholds")
+        st.dataframe(final_thresholds, use_container_width=True)
+    if not final_metrics.empty:
+        st.dataframe(final_metrics, use_container_width=True, height=280)
+    if not final_comparison.empty:
+        st.dataframe(final_comparison, use_container_width=True, height=260)
+
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
     if loss_fig.exists():
