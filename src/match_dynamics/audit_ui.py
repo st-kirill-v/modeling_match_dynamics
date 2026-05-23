@@ -35,6 +35,60 @@ def read_csv_head(path: str, nrows: int) -> pd.DataFrame:
     return pd.read_csv(fpath, nrows=nrows)
 
 
+@st.cache_data(show_spinner=False)
+def read_football_match_preview(path: str, nrows: int) -> pd.DataFrame:
+    fpath = Path(path)
+    if not fpath.exists():
+        return pd.DataFrame()
+    cols = [
+        "id_odsp",
+        "date",
+        "league",
+        "season",
+        "country",
+        "ht",
+        "at",
+        "fthg",
+        "ftag",
+        "final_score",
+    ]
+    df = pd.read_csv(fpath, usecols=lambda col: col in cols)
+    rows_per_match = df.groupby("id_odsp", dropna=False).size().rename("event_rows")
+    matches = df.drop_duplicates("id_odsp").merge(rows_per_match, on="id_odsp", how="left")
+    return matches.head(nrows)
+
+
+def compare_column_profiles(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:
+    if before.empty or after.empty:
+        return pd.DataFrame()
+    before_cols = before.set_index("column")
+    after_cols = after.set_index("column")
+    all_cols = sorted(set(before_cols.index) | set(after_cols.index))
+    rows = []
+    for col in all_cols:
+        before_exists = col in before_cols.index
+        after_exists = col in after_cols.index
+        rows.append(
+            {
+                "column": col,
+                "status": "created"
+                if after_exists and not before_exists
+                else "dropped"
+                if before_exists and not after_exists
+                else "kept",
+                "dtype_before": before_cols.at[col, "dtype"] if before_exists else pd.NA,
+                "dtype_after": after_cols.at[col, "dtype"] if after_exists else pd.NA,
+                "missing_rate_before": before_cols.at[col, "missing_rate"]
+                if before_exists
+                else pd.NA,
+                "missing_rate_after": after_cols.at[col, "missing_rate"] if after_exists else pd.NA,
+                "n_unique_before": before_cols.at[col, "n_unique"] if before_exists else pd.NA,
+                "n_unique_after": after_cols.at[col, "n_unique"] if after_exists else pd.NA,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def load_table(name: str) -> pd.DataFrame:
     return read_csv(str(csv_path(name)))
 
@@ -152,8 +206,6 @@ def show_football_merge() -> None:
     )
 
     summary = load_table("football_merge_summary.csv")
-    checks = load_table("football_merge_checks.csv")
-    rows_stats = load_table("football_merge_rows_per_match_stats.csv")
     profile = load_table("football_merged_event_match_columns.csv")
 
     if summary.empty:
@@ -172,25 +224,6 @@ def show_football_merge() -> None:
         if "matched_rate" in merged_row:
             cols[3].metric("Matched rows", f"{float(merged_row['matched_rate'].iloc[0]):.1%}")
 
-    st.subheader("Validation checks")
-    st.dataframe(checks, use_container_width=True, height=300)
-
-    st.subheader("Rows per match stats")
-    st.dataframe(rows_stats, use_container_width=True)
-    if not rows_stats.empty:
-        stat_order = ["min", "p05", "median", "mean", "p95", "p99", "max"]
-        plot_df = rows_stats[rows_stats["metric"].isin(stat_order)].copy()
-        plot_df["metric"] = pd.Categorical(plot_df["metric"], categories=stat_order, ordered=True)
-        plot_df = plot_df.sort_values("metric")
-        fig = px.bar(
-            plot_df,
-            x="metric",
-            y="value",
-            title="Events Rows Per Match: Summary Stats",
-            text="value",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
     st.subheader("Merged event-level head() with all columns")
     head_rows = st.slider("Rows to show from data/football_merged.csv", 5, 200, 30)
     merged_head = read_csv_head(str(PROJECT_ROOT / "data" / "football_merged.csv"), head_rows)
@@ -204,7 +237,26 @@ def show_football_merge() -> None:
         )
         st.dataframe(merged_head, use_container_width=True, height=560)
 
-    show_head_table("football_merged_head.csv", "Compact merged preview: key columns")
+    st.subheader("Compact merged preview: matches")
+    match_rows = st.slider(
+        "Rows to show from match-level preview",
+        30,
+        200,
+        50,
+        key="football_merge_match_preview_rows",
+    )
+    match_preview = read_football_match_preview(
+        str(PROJECT_ROOT / "data" / "football_merged.csv"), match_rows
+    )
+    if match_preview.empty:
+        st.warning(
+            "Match preview is unavailable. Refresh audit tables or rebuild football_merged.csv."
+        )
+    else:
+        st.caption(
+            "Каждая строка здесь - один матч, а `event_rows` показывает число событий в матче."
+        )
+        st.dataframe(match_preview, use_container_width=True, height=460)
 
     st.subheader("Merged columns: data types and quality")
     if profile.empty:
@@ -234,15 +286,12 @@ def show_football_merge() -> None:
     show_missing_bar(profile, "Football Merged: Top Missing Columns")
     show_dtype_bar(profile, "Football Merged: Column Types")
 
-    st.subheader("Merged column profile")
-    show_profile_table(profile)
-
 
 def show_football_merged_processed() -> None:
     st.header("Football Merged Processed")
     st.caption(
-        "Event-level processing built from data/football_merged.csv. "
-        "No aggregation, dictionary mapping, LSTM features, or global NaN fill are applied here."
+        "Current event-level processed dataset: data/football_merged_processed.csv. "
+        "No aggregation, dictionary mapping, LSTM sequences, or global NaN fill are applied here."
     )
 
     summary = load_table("football_merged_processed_summary.csv")
@@ -271,38 +320,40 @@ def show_football_merged_processed() -> None:
         st.warning("Processed merge tables not found. Click `Refresh audit tables` in the sidebar.")
         return
 
-    st.subheader("Transformation summary")
-    st.dataframe(summary, use_container_width=True)
     summary_map = dict(zip(summary["metric"], summary["value"], strict=False))
+    second_map = (
+        dict(zip(second_summary["metric"], second_summary["value"], strict=False))
+        if not second_summary.empty
+        else {}
+    )
+    output_rows = int(second_map.get("output_rows", summary_map.get("output_rows", 0)))
+    output_columns = int(second_map.get("output_columns", summary_map.get("output_columns", 0)))
+    created_total = int(summary_map.get("created_features_count", 0)) + int(
+        second_map.get("created_columns_count", 0)
+    )
+    dropped_total = int(summary_map.get("dropped_columns_count", 0)) + int(
+        second_map.get("dropped_columns_count", 0)
+    )
+    st.subheader("Processed dataset summary")
     cols = st.columns(4)
-    cols[0].metric(
-        "Input shape",
-        f"{int(summary_map.get('input_rows', 0))} x {int(summary_map.get('input_columns', 0))}",
-    )
-    cols[1].metric(
-        "Output shape",
-        f"{int(summary_map.get('output_rows', 0))} x {int(summary_map.get('output_columns', 0))}",
-    )
-    cols[2].metric("Created features", int(summary_map.get("created_features_count", 0)))
-    cols[3].metric("Dropped columns", int(summary_map.get("dropped_columns_count", 0)))
+    cols[0].metric("Current shape", f"{output_rows} x {output_columns}")
+    cols[1].metric("Created columns", created_total)
+    cols[2].metric("Dropped columns", dropped_total)
+    cols[3].metric("Impossible violations", int(second_map.get("impossible_value_violations", 0)))
+
+    with st.expander("Detailed processing summaries"):
+        st.dataframe(summary, use_container_width=True)
+        if not second_summary.empty:
+            st.dataframe(second_summary, use_container_width=True)
 
     if not second_summary.empty:
-        st.subheader("Second-pass summary: event_type, assist_method, quality checks")
-        st.dataframe(second_summary, use_container_width=True)
-        second_map = dict(zip(second_summary["metric"], second_summary["value"], strict=False))
         cols = st.columns(4)
         cols[0].metric(
-            "Second input shape",
-            f"{int(second_map.get('input_rows', 0))} x {int(second_map.get('input_columns', 0))}",
+            "Event/assist columns created", int(second_map.get("created_columns_count", 0))
         )
-        cols[1].metric(
-            "Second output shape",
-            f"{int(second_map.get('output_rows', 0))} x {int(second_map.get('output_columns', 0))}",
-        )
-        cols[2].metric("New columns", int(second_map.get("created_columns_count", 0)))
-        cols[3].metric(
-            "Impossible violations", int(second_map.get("impossible_value_violations", 0))
-        )
+        cols[1].metric("Existing columns updated", int(second_map.get("updated_columns_count", 0)))
+        cols[2].metric("Second-pass dropped", int(second_map.get("dropped_columns_count", 0)))
+        cols[3].metric("Duplicate id_event rows", int(second_map.get("id_event_duplicate_rows", 0)))
 
     st.subheader("Feature engineering log")
     action_filter = st.multiselect(
