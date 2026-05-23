@@ -949,6 +949,37 @@ def show_football_metrics() -> None:
         with st.expander("Feature ranking by aggregate absolute correlation"):
             st.dataframe(ablation_ranking, use_container_width=True, height=520)
 
+    threshold_best = load_football_metric_table("threshold_tuning/best_thresholds.csv")
+    threshold_metrics = load_football_metric_table("threshold_tuning/threshold_metrics.csv")
+    threshold_comparison = load_football_metric_table(
+        "threshold_tuning/threshold_0_5_vs_tuned_comparison.csv"
+    )
+    if not threshold_best.empty:
+        st.subheader("Top-50 threshold tuning")
+        st.caption("Best thresholds are selected on validation by F1 and then applied to test.")
+        st.dataframe(threshold_best, use_container_width=True)
+    if not threshold_metrics.empty:
+        st.dataframe(threshold_metrics, use_container_width=True, height=320)
+    if not threshold_comparison.empty:
+        st.dataframe(threshold_comparison, use_container_width=True, height=240)
+        fig = px.bar(
+            threshold_comparison,
+            x="delta",
+            y="metric",
+            color="target",
+            barmode="group",
+            orientation="h",
+            title="Test metric delta: tuned threshold minus 0.5",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    threshold_figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football" / "threshold_tuning"
+    threshold_figures = sorted(threshold_figures_dir.glob("threshold_curves_*.png"))
+    if threshold_figures:
+        cols = st.columns(2)
+        for idx, fig_path in enumerate(threshold_figures):
+            with cols[idx % 2]:
+                st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
+
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
     if loss_fig.exists():
