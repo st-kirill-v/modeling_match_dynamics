@@ -19,8 +19,15 @@ def csv_path(name: str) -> Path:
     return AUDIT_DIR / name
 
 
+def file_signature(path: Path) -> str:
+    if not path.exists():
+        return "missing"
+    stat = path.stat()
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
 @st.cache_data(show_spinner=False)
-def read_csv(path: str) -> pd.DataFrame:
+def read_csv(path: str, stamp: str) -> pd.DataFrame:
     fpath = Path(path)
     if not fpath.exists():
         return pd.DataFrame()
@@ -28,7 +35,7 @@ def read_csv(path: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def read_csv_head(path: str, nrows: int) -> pd.DataFrame:
+def read_csv_head(path: str, nrows: int, stamp: str) -> pd.DataFrame:
     fpath = Path(path)
     if not fpath.exists():
         return pd.DataFrame()
@@ -36,7 +43,7 @@ def read_csv_head(path: str, nrows: int) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def read_football_match_preview(path: str, nrows: int) -> pd.DataFrame:
+def read_football_match_preview(path: str, nrows: int, stamp: str) -> pd.DataFrame:
     fpath = Path(path)
     if not fpath.exists():
         return pd.DataFrame()
@@ -59,7 +66,7 @@ def read_football_match_preview(path: str, nrows: int) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def read_event_dataset_summary(path: str, dataset_name: str) -> pd.DataFrame:
+def read_event_dataset_summary(path: str, dataset_name: str, stamp: str) -> pd.DataFrame:
     fpath = Path(path)
     if not fpath.exists():
         return pd.DataFrame()
@@ -114,11 +121,13 @@ def compare_column_profiles(before: pd.DataFrame, after: pd.DataFrame) -> pd.Dat
 
 
 def load_table(name: str) -> pd.DataFrame:
-    return read_csv(str(csv_path(name)))
+    path = csv_path(name)
+    return read_csv(str(path), file_signature(path))
 
 
 def load_metric_table(name: str) -> pd.DataFrame:
-    return read_csv(str(METRICS_DIR / name))
+    path = METRICS_DIR / name
+    return read_csv(str(path), file_signature(path))
 
 
 def show_missing_bar(profile: pd.DataFrame, title: str, limit: int = 30) -> None:
@@ -250,7 +259,8 @@ def show_football_merge() -> None:
 
     st.subheader("Merged event-level head() with all columns")
     head_rows = st.slider("Rows to show from data/football_merged.csv", 5, 200, 30)
-    merged_head = read_csv_head(str(PROJECT_ROOT / "data" / "football_merged.csv"), head_rows)
+    merged_path = PROJECT_ROOT / "data" / "football_merged.csv"
+    merged_head = read_csv_head(str(merged_path), head_rows, file_signature(merged_path))
     if merged_head.empty:
         st.warning(
             "data/football_merged.csv не найден. Сначала запусти merge или Refresh audit tables."
@@ -270,7 +280,7 @@ def show_football_merge() -> None:
         key="football_merge_match_preview_rows",
     )
     match_preview = read_football_match_preview(
-        str(PROJECT_ROOT / "data" / "football_merged.csv"), match_rows
+        str(merged_path), match_rows, file_signature(merged_path)
     )
     if match_preview.empty:
         st.warning(
@@ -318,7 +328,10 @@ def show_football_merged_processed() -> None:
     )
 
     processed_path = PROJECT_ROOT / "data" / "football_merged_processed.csv"
-    summary = read_event_dataset_summary(str(processed_path), "football_merged_processed")
+    processed_stamp = file_signature(processed_path)
+    summary = read_event_dataset_summary(
+        str(processed_path), "football_merged_processed", processed_stamp
+    )
     profile = load_table("football_merged_processed_columns.csv")
 
     if summary.empty:
@@ -345,7 +358,7 @@ def show_football_merged_processed() -> None:
         30,
         key="football_merged_processed_head_rows",
     )
-    processed_head = read_csv_head(str(processed_path), head_rows)
+    processed_head = read_csv_head(str(processed_path), head_rows, processed_stamp)
     if processed_head.empty:
         st.warning("data/football_merged_processed.csv not found. Run processing or refresh audit.")
     else:
@@ -360,7 +373,7 @@ def show_football_merged_processed() -> None:
         50,
         key="football_processed_match_preview_rows",
     )
-    match_preview = read_football_match_preview(str(processed_path), match_rows)
+    match_preview = read_football_match_preview(str(processed_path), match_rows, processed_stamp)
     if match_preview.empty:
         st.warning(
             "Processed match preview is unavailable. Refresh audit tables or rebuild processed file."
