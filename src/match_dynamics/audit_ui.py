@@ -1086,6 +1086,9 @@ def show_football_metrics() -> None:
     final_comparison = load_football_metric_table(
         "threshold_tuning_final/final_fixed_threshold_comparison.csv"
     )
+    calibration_metrics = load_football_metric_table("calibration/calibration_metrics.csv")
+    calibration_comparison = load_football_metric_table("calibration/calibration_comparison.csv")
+    calibration_diagnostics = load_football_metric_table("calibration/calibration_diagnostics.csv")
     if not final_thresholds.empty:
         st.subheader("Final fixed thresholds")
         st.dataframe(final_thresholds, use_container_width=True)
@@ -1093,6 +1096,67 @@ def show_football_metrics() -> None:
         st.dataframe(final_metrics, use_container_width=True, height=280)
     if not final_comparison.empty:
         st.dataframe(final_comparison, use_container_width=True, height=260)
+
+    if not calibration_metrics.empty:
+        st.subheader("Top-50 probability calibration")
+        st.caption(
+            "Calibrators are fitted on validation predictions only; test is used only for final evaluation."
+        )
+        if not calibration_diagnostics.empty:
+            st.dataframe(calibration_diagnostics, use_container_width=True)
+        st.dataframe(calibration_metrics, use_container_width=True, height=320)
+        metric = st.selectbox(
+            "Calibration metric",
+            [
+                c
+                for c in [
+                    "brier",
+                    "log_loss",
+                    "roc_auc",
+                    "pr_auc",
+                    "accuracy",
+                    "precision",
+                    "recall",
+                    "f1",
+                ]
+                if c in calibration_metrics
+            ],
+            key="football_calibration_metric_select",
+        )
+        fig = px.bar(
+            calibration_metrics,
+            x="calibration_method",
+            y=metric,
+            color="target",
+            barmode="group",
+            title=f"Raw vs calibrated probabilities by {metric}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    if not calibration_comparison.empty:
+        st.markdown("**Calibration delta vs raw**")
+        st.dataframe(calibration_comparison, use_container_width=True, height=320)
+        main_calib = calibration_comparison[
+            calibration_comparison["metric"].isin(["brier", "log_loss"])
+        ].copy()
+        if not main_calib.empty:
+            fig = px.bar(
+                main_calib,
+                x="delta_calibrated_minus_raw",
+                y="metric",
+                color="calibrated_method",
+                facet_col="target",
+                barmode="group",
+                orientation="h",
+                title="Calibration delta for Brier/log_loss. Lower is better, so negative is improvement.",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    calibration_figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football" / "calibration"
+    calibration_figures = sorted(calibration_figures_dir.glob("calibration_curve_*.png"))
+    if calibration_figures:
+        cols = st.columns(2)
+        for idx, fig_path in enumerate(calibration_figures):
+            with cols[idx % 2]:
+                st.image(str(fig_path), caption=fig_path.name, use_container_width=True)
 
     figures_dir = PROJECT_ROOT / "outputs" / "figures" / "football"
     loss_fig = figures_dir / "baseline_lstm_loss_curves.png"
