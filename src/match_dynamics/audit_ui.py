@@ -58,6 +58,30 @@ def read_football_match_preview(path: str, nrows: int) -> pd.DataFrame:
     return matches.head(nrows)
 
 
+@st.cache_data(show_spinner=False)
+def read_event_dataset_summary(path: str, dataset_name: str) -> pd.DataFrame:
+    fpath = Path(path)
+    if not fpath.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(fpath, usecols=lambda col: col in ["id_odsp"])
+    columns = len(pd.read_csv(fpath, nrows=0).columns)
+    return pd.DataFrame(
+        [
+            {
+                "dataset": dataset_name,
+                "rows": len(df),
+                "columns": columns,
+                "unique_matches": df["id_odsp"].nunique(dropna=True)
+                if "id_odsp" in df.columns
+                else pd.NA,
+                "null_id_odsp": int(df["id_odsp"].isna().sum())
+                if "id_odsp" in df.columns
+                else pd.NA,
+            }
+        ]
+    )
+
+
 def compare_column_profiles(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:
     if before.empty or after.empty:
         return pd.DataFrame()
@@ -288,182 +312,30 @@ def show_football_merge() -> None:
 
 
 def show_football_merged_processed() -> None:
-    st.header("Football Merged Processed")
+    st.header("Football Merged Processed: football_merged_processed.csv")
     st.caption(
-        "Current event-level processed dataset: data/football_merged_processed.csv. "
-        "No aggregation, dictionary mapping, LSTM sequences, or global NaN fill are applied here."
+        "Same view structure as Football Merge, but using the processed event-level dataset."
     )
 
-    summary = load_table("football_merged_processed_summary.csv")
-    second_summary = load_table("football_merged_processed_second_pass_summary.csv")
-    feature_log = load_table("football_merged_processed_feature_log.csv")
-    second_log = load_table("football_merged_processed_second_pass_log.csv")
-    validation = load_table("football_merged_processed_binary_validation.csv")
-    second_validation = load_table("football_merged_processed_second_pass_binary_validation.csv")
-    new_features_head = load_table("football_merged_processed_new_features_head.csv")
-    second_new_features_head = load_table(
-        "football_merged_processed_second_pass_new_features_head.csv"
-    )
-    impossible = load_table("football_merged_processed_impossible_values.csv")
-    duplicate_summary = load_table("football_merged_processed_duplicate_summary.csv")
-    duplicate_id_event = load_table("football_merged_processed_duplicate_id_event_report.csv")
-    temporal = load_table("football_merged_processed_temporal_consistency.csv")
-    event_counts = load_table("football_merged_processed_event_flag_counts.csv")
-    side_counts = load_table("football_merged_processed_side_event_counts.csv")
-    goals_side = load_table("football_merged_processed_goals_by_side.csv")
-    events_per_match = load_table("football_merged_processed_events_per_match_stats.csv")
-    time_dist = load_table("football_merged_processed_time_distribution.csv")
-    duplicate_features = load_table("football_merged_processed_duplicate_feature_checks.csv")
+    processed_path = PROJECT_ROOT / "data" / "football_merged_processed.csv"
+    summary = read_event_dataset_summary(str(processed_path), "football_merged_processed")
     profile = load_table("football_merged_processed_columns.csv")
 
     if summary.empty:
-        st.warning("Processed merge tables not found. Click `Refresh audit tables` in the sidebar.")
+        st.warning(
+            "data/football_merged_processed.csv not found. Run processing or click `Refresh audit tables`."
+        )
         return
 
-    summary_map = dict(zip(summary["metric"], summary["value"], strict=False))
-    second_map = (
-        dict(zip(second_summary["metric"], second_summary["value"], strict=False))
-        if not second_summary.empty
-        else {}
-    )
-    output_rows = int(second_map.get("output_rows", summary_map.get("output_rows", 0)))
-    output_columns = int(second_map.get("output_columns", summary_map.get("output_columns", 0)))
-    created_total = int(summary_map.get("created_features_count", 0)) + int(
-        second_map.get("created_columns_count", 0)
-    )
-    dropped_total = int(summary_map.get("dropped_columns_count", 0)) + int(
-        second_map.get("dropped_columns_count", 0)
-    )
-    st.subheader("Processed dataset summary")
+    st.subheader("Processed summary")
+    st.dataframe(summary, use_container_width=True)
+
+    processed_row = summary.iloc[0]
     cols = st.columns(4)
-    cols[0].metric("Current shape", f"{output_rows} x {output_columns}")
-    cols[1].metric("Created columns", created_total)
-    cols[2].metric("Dropped columns", dropped_total)
-    cols[3].metric("Impossible violations", int(second_map.get("impossible_value_violations", 0)))
-
-    with st.expander("Detailed processing summaries"):
-        st.dataframe(summary, use_container_width=True)
-        if not second_summary.empty:
-            st.dataframe(second_summary, use_container_width=True)
-
-    if not second_summary.empty:
-        cols = st.columns(4)
-        cols[0].metric(
-            "Event/assist columns created", int(second_map.get("created_columns_count", 0))
-        )
-        cols[1].metric("Existing columns updated", int(second_map.get("updated_columns_count", 0)))
-        cols[2].metric("Second-pass dropped", int(second_map.get("dropped_columns_count", 0)))
-        cols[3].metric("Duplicate id_event rows", int(second_map.get("id_event_duplicate_rows", 0)))
-
-    st.subheader("Feature engineering log")
-    action_filter = st.multiselect(
-        "Filter actions",
-        sorted(feature_log["action"].dropna().unique().tolist()) if not feature_log.empty else [],
-        default=sorted(feature_log["action"].dropna().unique().tolist())
-        if not feature_log.empty
-        else [],
-    )
-    log_view = feature_log
-    if action_filter:
-        log_view = feature_log[feature_log["action"].isin(action_filter)]
-    st.dataframe(log_view, use_container_width=True, height=360)
-
-    if not second_log.empty:
-        st.subheader("Second-pass log")
-        st.dataframe(second_log, use_container_width=True, height=360)
-
-    st.subheader("Binary feature validation")
-    st.dataframe(validation, use_container_width=True, height=420)
-    if not validation.empty:
-        valid_count = int(validation["valid_0_1_only"].sum())
-        st.metric("Valid binary features", f"{valid_count}/{len(validation)}")
-        fig = px.bar(
-            validation,
-            x="feature",
-            y="null_count",
-            color="valid_0_1_only",
-            title="Created Binary Features: Null Count And 0/1 Validation",
-        )
-        fig.update_layout(xaxis_tickangle=-35)
-        st.plotly_chart(fig, use_container_width=True)
-
-    if not second_validation.empty:
-        st.subheader("Second-pass binary validation")
-        st.dataframe(second_validation, use_container_width=True, height=360)
-
-    st.subheader("First 5 rows of new features")
-    st.dataframe(new_features_head, use_container_width=True, height=240)
-
-    if not second_new_features_head.empty:
-        st.subheader("First 5 rows of event_type / assist_method features")
-        st.dataframe(second_new_features_head, use_container_width=True, height=240)
-
-    st.subheader("Impossible values")
-    if impossible.empty:
-        st.info("Impossible values report not found.")
-    else:
-        st.dataframe(impossible, use_container_width=True, height=420)
-        fig = px.bar(
-            impossible.sort_values("violations", ascending=False).head(40),
-            x="violations",
-            y="check",
-            orientation="h",
-            color="has_warning",
-            title="Impossible Values: Violations",
-        )
-        fig.update_layout(height=700)
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Duplicates and temporal consistency")
-    left, right = st.columns(2)
-    with left:
-        st.caption("Duplicate summary")
-        st.dataframe(duplicate_summary, use_container_width=True)
-    with right:
-        st.caption("Temporal consistency")
-        st.dataframe(temporal, use_container_width=True)
-    if not duplicate_id_event.empty:
-        st.warning(f"Duplicate id_event rows found: {len(duplicate_id_event)} duplicated ids.")
-        st.dataframe(duplicate_id_event.head(200), use_container_width=True, height=300)
-
-    st.subheader("Event distributions")
-    if not event_counts.empty:
-        fig = px.bar(
-            event_counts.sort_values("count"),
-            x="count",
-            y="feature",
-            orientation="h",
-            title="Event Counts By Event Type Flags",
-        )
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
-    dist_cols = st.columns(2)
-    with dist_cols[0]:
-        st.caption("Home vs away event counts")
-        st.dataframe(side_counts, use_container_width=True)
-        if not side_counts.empty:
-            fig = px.bar(side_counts, x="side", y="count", title="Events By Side")
-            st.plotly_chart(fig, use_container_width=True)
-    with dist_cols[1]:
-        st.caption("Goals by side")
-        st.dataframe(goals_side, use_container_width=True)
-        if not goals_side.empty:
-            fig = px.bar(goals_side, x="side", y="goals", title="Goals By Side")
-            st.plotly_chart(fig, use_container_width=True)
-
-    dist_cols = st.columns(2)
-    with dist_cols[0]:
-        st.caption("Events per match stats")
-        st.dataframe(events_per_match, use_container_width=True)
-    with dist_cols[1]:
-        st.caption("Time distribution")
-        st.dataframe(time_dist, use_container_width=True)
-        if not time_dist.empty:
-            fig = px.bar(time_dist, x="time_bucket", y="count", title="Time Distribution")
-            st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Potential duplicate features")
-    st.dataframe(duplicate_features, use_container_width=True)
+    cols[0].metric("Processed rows", f"{int(processed_row['rows']):,}".replace(",", " "))
+    cols[1].metric("Processed columns", int(processed_row["columns"]))
+    cols[2].metric("Unique matches", int(processed_row["unique_matches"]))
+    cols[3].metric("Null match ids", int(processed_row["null_id_odsp"]))
 
     st.subheader("Processed event-level head() with all columns")
     head_rows = st.slider(
@@ -473,13 +345,29 @@ def show_football_merged_processed() -> None:
         30,
         key="football_merged_processed_head_rows",
     )
-    processed_head = read_csv_head(
-        str(PROJECT_ROOT / "data" / "football_merged_processed.csv"), head_rows
-    )
+    processed_head = read_csv_head(str(processed_path), head_rows)
     if processed_head.empty:
         st.warning("data/football_merged_processed.csv not found. Run processing or refresh audit.")
     else:
+        st.caption("First rows of the full processed event-level dataset with all columns.")
         st.dataframe(processed_head, use_container_width=True, height=560)
+
+    st.subheader("Compact processed preview: matches")
+    match_rows = st.slider(
+        "Rows to show from processed match-level preview",
+        30,
+        200,
+        50,
+        key="football_processed_match_preview_rows",
+    )
+    match_preview = read_football_match_preview(str(processed_path), match_rows)
+    if match_preview.empty:
+        st.warning(
+            "Processed match preview is unavailable. Refresh audit tables or rebuild processed file."
+        )
+    else:
+        st.caption("Each row is one match; `event_rows` is the number of processed events in it.")
+        st.dataframe(match_preview, use_container_width=True, height=460)
 
     st.subheader("Processed columns: data types and quality")
     if profile.empty:
@@ -509,8 +397,51 @@ def show_football_merged_processed() -> None:
     show_missing_bar(profile, "Football Merged Processed: Top Missing Columns")
     show_dtype_bar(profile, "Football Merged Processed: Column Types")
 
-    st.subheader("Full processed column profile")
-    show_profile_table(profile)
+    with st.expander("Processing diagnostics"):
+        second_summary = load_table("football_merged_processed_second_pass_summary.csv")
+        feature_log = load_table("football_merged_processed_feature_log.csv")
+        second_log = load_table("football_merged_processed_second_pass_log.csv")
+        validation = load_table("football_merged_processed_binary_validation.csv")
+        second_validation = load_table(
+            "football_merged_processed_second_pass_binary_validation.csv"
+        )
+        impossible = load_table("football_merged_processed_impossible_values.csv")
+        duplicate_summary = load_table("football_merged_processed_duplicate_summary.csv")
+        temporal = load_table("football_merged_processed_temporal_consistency.csv")
+        duplicate_features = load_table("football_merged_processed_duplicate_feature_checks.csv")
+
+        if not second_summary.empty:
+            st.caption("Second-pass summary")
+            st.dataframe(second_summary, use_container_width=True)
+        cols = st.columns(4)
+        if not second_summary.empty:
+            second_map = dict(zip(second_summary["metric"], second_summary["value"], strict=False))
+            cols[0].metric("Created", int(second_map.get("created_columns_count", 0)))
+            cols[1].metric("Updated", int(second_map.get("updated_columns_count", 0)))
+            cols[2].metric("Dropped", int(second_map.get("dropped_columns_count", 0)))
+            cols[3].metric("Impossible", int(second_map.get("impossible_value_violations", 0)))
+
+        st.caption("Feature engineering log")
+        st.dataframe(feature_log, use_container_width=True, height=240)
+        if not second_log.empty:
+            st.caption("Second-pass log")
+            st.dataframe(second_log, use_container_width=True, height=240)
+        st.caption("Binary validation")
+        st.dataframe(validation, use_container_width=True, height=240)
+        if not second_validation.empty:
+            st.caption("Second-pass binary validation")
+            st.dataframe(second_validation, use_container_width=True, height=240)
+        st.caption("Impossible values")
+        st.dataframe(impossible, use_container_width=True, height=240)
+        left, right = st.columns(2)
+        with left:
+            st.caption("Duplicate summary")
+            st.dataframe(duplicate_summary, use_container_width=True)
+        with right:
+            st.caption("Temporal consistency")
+            st.dataframe(temporal, use_container_width=True)
+        st.caption("Potential duplicate features")
+        st.dataframe(duplicate_features, use_container_width=True)
 
 
 def show_football_processed() -> None:
