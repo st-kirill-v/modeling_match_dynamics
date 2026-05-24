@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-archives", type=int, default=500)
     parser.add_argument("--max-events", type=int, default=500)
     parser.add_argument(
+        "--output-csv",
+        type=Path,
+        default=None,
+        help="Merged output CSV path. Defaults to data/nba/nba_events_shots_merged_<max-events>.csv.",
+    )
+    parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Use already downloaded data/nba files and only rebuild merge reports.",
@@ -62,12 +68,13 @@ def main() -> None:
     args = parse_args()
     cfg = ProjectConfig()
     nba_dir = cfg.data_dir / "nba"
+    output_csv = args.output_csv or nba_dir / f"nba_events_shots_merged_{args.max_events}.csv"
     paths = NbaMergePaths(
         data_dir=nba_dir,
         movement_dir=nba_dir / "movement",
         events_dir=nba_dir / "events",
         shots_dir=nba_dir / "shots",
-        merged_csv=nba_dir / "nba_events_shots_merged_500.csv",
+        merged_csv=output_csv,
         audit_dir=cfg.output_dir / "audits" / "data_quality",
         report_dir=cfg.output_dir / "reports" / "nba_merge",
     )

@@ -241,30 +241,43 @@ def column_quality(df: pd.DataFrame) -> pd.DataFrame:
 
 def select_merge_keys(
     events_df: pd.DataFrame, shots_df: pd.DataFrame
-) -> tuple[list[str], pd.DataFrame]:
+) -> tuple[list[str], list[str], pd.DataFrame]:
     events_cols = set(events_df.columns)
     shots_cols = set(shots_df.columns)
     if {"GAME_ID", "EVENT_ID"}.issubset(events_cols) and {"GAME_ID", "EVENT_ID"}.issubset(
         shots_cols
     ):
-        keys = ["GAME_ID", "EVENT_ID"]
+        left_keys = ["GAME_ID", "EVENT_ID"]
+        right_keys = ["GAME_ID", "EVENT_ID"]
         reason = "GAME_ID and EVENT_ID are present in both datasets."
+    elif {"GAME_ID", "EVENTNUM"}.issubset(events_cols) and {
+        "GAME_ID",
+        "GAME_EVENT_ID",
+    }.issubset(shots_cols):
+        left_keys = ["GAME_ID", "EVENTNUM"]
+        right_keys = ["GAME_ID", "GAME_EVENT_ID"]
+        reason = "Using play-by-play EVENTNUM matched to shot chart GAME_EVENT_ID."
     elif "GAME_ID" in events_cols and "GAME_ID" in shots_cols:
-        keys = ["GAME_ID"]
-        reason = "EVENT_ID is absent or named differently; merged only by GAME_ID."
+        left_keys = ["GAME_ID"]
+        right_keys = ["GAME_ID"]
+        reason = (
+            "EVENT_ID/EVENTNUM keys are absent or named differently; merged only by GAME_ID. "
+            "This can create a large many-to-many join."
+        )
     else:
         raise ValueError("Cannot merge NBA events and shots: GAME_ID is missing.")
     diagnostics = pd.DataFrame(
         [
             {
-                "merge_keys": " + ".join(keys),
+                "left_keys": " + ".join(left_keys),
+                "right_keys": " + ".join(right_keys),
                 "reason": reason,
                 "events_columns": ", ".join(events_df.columns.astype(str)),
                 "shots_columns": ", ".join(shots_df.columns.astype(str)),
             }
         ]
     )
-    return keys, diagnostics
+    return left_keys, right_keys, diagnostics
 
 
 def build_nba_events_shots_merge(
@@ -283,8 +296,14 @@ def build_nba_events_shots_merge(
     if shots_df.empty:
         raise ValueError(f"shots_fixed.csv is missing or empty: {shots_path}")
 
-    keys, merge_diagnostics = select_merge_keys(events_df, shots_df)
-    merged = events_df.merge(shots_df, on=keys, how="left", suffixes=("_event", "_shot"))
+    left_keys, right_keys, merge_diagnostics = select_merge_keys(events_df, shots_df)
+    merged = events_df.merge(
+        shots_df,
+        left_on=left_keys,
+        right_on=right_keys,
+        how="left",
+        suffixes=("_event", "_shot"),
+    )
     paths.merged_csv.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(paths.merged_csv, index=False)
 
@@ -302,7 +321,10 @@ def build_nba_events_shots_merge(
                 "metric": "merged_unique_GAME_ID",
                 "value": int(merged["GAME_ID"].nunique()) if "GAME_ID" in merged else 0,
             },
-            {"metric": "merge_keys", "value": " + ".join(keys)},
+            {
+                "metric": "merge_keys",
+                "value": f"{' + '.join(left_keys)} -> {' + '.join(right_keys)}",
+            },
             {"metric": "merged_output", "value": str(paths.merged_csv)},
         ]
     )
