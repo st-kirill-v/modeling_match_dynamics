@@ -141,6 +141,122 @@ def load_report_table(name: str) -> pd.DataFrame:
     return read_csv(str(path), file_signature(path))
 
 
+@st.cache_data(show_spinner=False)
+def read_direct_csv_head(path: str, nrows: int, stamp: str) -> pd.DataFrame:
+    fpath = Path(path)
+    if not fpath.exists():
+        return pd.DataFrame()
+    return pd.read_csv(fpath, nrows=nrows)
+
+
+@st.cache_data(show_spinner=False)
+def direct_nba_file_inventory(stamp: str) -> pd.DataFrame:
+    nba_dir = PROJECT_ROOT / "data" / "nba"
+    rows = []
+    for source, folder, pattern in [
+        ("movement", nba_dir / "movement", "*.7z"),
+        ("events", nba_dir / "events", "*.csv"),
+        ("shots", nba_dir / "shots", "*.csv"),
+    ]:
+        files = sorted(folder.glob(pattern)) if folder.exists() else []
+        rows.append(
+            {
+                "source": source,
+                "folder": str(folder),
+                "files": len(files),
+                "total_size_mb": sum(path.stat().st_size for path in files) / 1024 / 1024,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False)
+def inspect_direct_movement_archive(stamp: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    movement_dir = PROJECT_ROOT / "data" / "nba" / "movement"
+    archive_files = sorted(movement_dir.glob("*.7z")) if movement_dir.exists() else []
+    if not archive_files:
+        return pd.DataFrame(), pd.DataFrame()
+    archive_path = archive_files[0]
+    try:
+        import json
+        import tempfile
+
+        import py7zr
+
+        with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+            names = archive.getnames()
+            json_names = [name for name in names if name.lower().endswith(".json")]
+            inventory = pd.DataFrame(
+                [
+                    {
+                        "archive_name": archive_path.name,
+                        "archive_path": str(archive_path),
+                        "files_inside": ", ".join(names),
+                        "readable": True,
+                        "warning": "",
+                    }
+                ]
+            )
+            if not json_names:
+                return inventory, pd.DataFrame()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                archive.extract(path=tmpdir, targets=[json_names[0]])
+                extracted = Path(tmpdir) / json_names[0]
+                with extracted.open(encoding="utf-8") as f:
+                    payload = json.load(f)
+            events = payload.get("events", [])
+            sample_event = events[0] if events else {}
+            moments = sample_event.get("moments", []) if isinstance(sample_event, dict) else []
+            head = pd.DataFrame(
+                [
+                    {
+                        "archive_name": archive_path.name,
+                        "file_inside": json_names[0],
+                        "gameid": payload.get("gameid"),
+                        "events_count": len(events),
+                        "sample_event_id": sample_event.get("eventId")
+                        if isinstance(sample_event, dict)
+                        else None,
+                        "sample_moments_count": len(moments),
+                        "sample_first_moment": str(moments[0])[:500] if moments else "",
+                    }
+                ]
+            )
+            return inventory, head
+    except Exception as exc:
+        inventory = pd.DataFrame(
+            [
+                {
+                    "archive_name": archive_path.name,
+                    "archive_path": str(archive_path),
+                    "files_inside": "",
+                    "readable": False,
+                    "warning": str(exc),
+                }
+            ]
+        )
+        return inventory, pd.DataFrame()
+
+
+def direct_column_quality(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    rows = []
+    for col in df.columns:
+        null_count = int(df[col].isna().sum())
+        rows.append(
+            {
+                "column": col,
+                "dtype": str(df[col].dtype),
+                "non_null_count": int(df[col].notna().sum()),
+                "null_count": null_count,
+                "null_percent": null_count / len(df) if len(df) else 0,
+                "unique_count": int(df[col].nunique(dropna=True)),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("null_percent", ascending=False)
+
+
 def show_missing_bar(profile: pd.DataFrame, title: str, limit: int = 30) -> None:
     if profile.empty or "missing_rate" not in profile.columns:
         st.info("Нет данных для графика пропусков.")
@@ -762,6 +878,144 @@ def show_nba_raw() -> None:
     show_profile_table(profile)
 
 
+def show_nba_merge() -> None:
+    st.header("NBA Merge")
+    st.caption(
+        "NBA raw inspection page. Merge is intentionally paused for now; movement archives are "
+        "downloaded and inspected only, and events/shots_fixed are shown separately."
+    )
+
+    download_inventory = load_table("nba_merge_download_inventory.csv")
+    skipped = load_table("nba_merge_skipped_files.csv")
+    movement_inventory = load_table("nba_merge_movement_inventory.csv")
+    movement_head = load_table("nba_merge_movement_head.csv")
+    events_head = load_table("nba_merge_events_head.csv")
+    shots_head = load_table("nba_merge_shots_fixed_head.csv")
+    merge_diagnostics = load_table("nba_merge_merge_diagnostics.csv")
+    merged_summary = load_table("nba_merge_merged_summary.csv")
+    merged_head = load_table("nba_merge_merged_head.csv")
+    quality = load_table("nba_merge_merged_column_quality.csv")
+    top_missing = load_table("nba_merge_merged_top_missing_columns.csv")
+    event_file_report = load_table("nba_merge_event_file_report.csv")
+
+    if merged_summary.empty:
+        st.info(
+            "Merge is intentionally not built yet. Showing raw downloaded NBA sources from `data/nba`."
+        )
+        raw_stamp = file_signature(PROJECT_ROOT / "data" / "nba" / "shots" / "shots_fixed.csv")
+        direct_inventory = direct_nba_file_inventory(raw_stamp)
+        st.subheader("Downloaded raw NBA files")
+        st.dataframe(direct_inventory, use_container_width=True, height=180)
+        if not direct_inventory.empty:
+            fig = px.bar(
+                direct_inventory,
+                x="files",
+                y="source",
+                orientation="h",
+                text="files",
+                title="NBA raw files currently available locally",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        movement_inventory, movement_head = inspect_direct_movement_archive(raw_stamp)
+        st.subheader("Movement sample head()")
+        st.markdown("Movement пока не мержим: это тяжелый tracking source, сейчас только sample.")
+        st.dataframe(movement_inventory, use_container_width=True, height=220)
+        st.dataframe(movement_head, use_container_width=True, height=260)
+
+        events_dir = PROJECT_ROOT / "data" / "nba" / "events"
+        event_files = sorted(events_dir.glob("*.csv")) if events_dir.exists() else []
+        event_path = event_files[0] if event_files else None
+        events_df = (
+            read_direct_csv_head(str(event_path), 50, file_signature(event_path))
+            if event_path is not None
+            else pd.DataFrame()
+        )
+        st.subheader("Events head()")
+        if event_path is not None:
+            st.caption(f"Sample file: `{event_path.name}`")
+        st.dataframe(events_df, use_container_width=True, height=320)
+        st.subheader("Events column quality")
+        st.dataframe(direct_column_quality(events_df), use_container_width=True, height=320)
+
+        shots_path = PROJECT_ROOT / "data" / "nba" / "shots" / "shots_fixed.csv"
+        shots_df = read_direct_csv_head(str(shots_path), 50, file_signature(shots_path))
+        st.subheader("Shots fixed head()")
+        st.dataframe(shots_df, use_container_width=True, height=320)
+        st.subheader("Shots fixed column quality")
+        st.dataframe(direct_column_quality(shots_df), use_container_width=True, height=320)
+
+        st.subheader("Future merge keys")
+        st.markdown(
+            """
+            Для будущего корректного merge нельзя соединять только по `GAME_ID`, потому что это
+            создаёт huge many-to-many join.
+
+            Правильная логика:
+            - `events.GAME_ID` = `shots_fixed.GAME_ID`
+            - `events.EVENTNUM` = `shots_fixed.GAME_EVENT_ID`
+            """
+        )
+        return
+
+    st.subheader("Download inventory")
+    st.dataframe(download_inventory, use_container_width=True, height=260)
+    if not download_inventory.empty:
+        fig = px.bar(
+            download_inventory.groupby("source_type", as_index=False)
+            .agg(files=("local_path", "count"), size_mb=("size_mb", "sum"))
+            .sort_values("files"),
+            x="files",
+            y="source_type",
+            orientation="h",
+            text="files",
+            title="Downloaded / cached NBA source files",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    if not skipped.empty:
+        with st.expander("Skipped / cached / failed files"):
+            st.dataframe(skipped, use_container_width=True, height=260)
+
+    st.subheader("Movement sample head()")
+    st.markdown("Movement пока не входит в основной merge, потому что tracking data тяжелые.")
+    st.dataframe(movement_inventory, use_container_width=True, height=220)
+    st.dataframe(movement_head, use_container_width=True, height=260)
+
+    st.subheader("Events head()")
+    st.dataframe(events_head, use_container_width=True, height=320)
+    with st.expander("Events file read diagnostics"):
+        st.dataframe(event_file_report, use_container_width=True, height=320)
+
+    st.subheader("Shots fixed head()")
+    st.dataframe(shots_head, use_container_width=True, height=320)
+
+    st.subheader("Merge diagnostics")
+    st.dataframe(merge_diagnostics, use_container_width=True, height=220)
+    st.dataframe(merged_summary, use_container_width=True, height=260)
+
+    st.subheader("Merged head()")
+    st.dataframe(merged_head, use_container_width=True, height=360)
+
+    st.subheader("Merged columns: data types and quality")
+    st.dataframe(quality, use_container_width=True, height=420)
+
+    st.subheader("Top missing columns")
+    st.dataframe(top_missing, use_container_width=True, height=320)
+    if not top_missing.empty:
+        plot_df = top_missing.sort_values("null_percent", ascending=True).tail(30)
+        fig = px.bar(
+            plot_df,
+            x="null_percent",
+            y="column",
+            orientation="h",
+            title="NBA merged top missing columns",
+            text=plot_df["null_percent"].map(lambda x: f"{x:.1%}"),
+        )
+        fig.update_layout(height=max(520, 20 * len(plot_df)), xaxis_tickformat=".0%")
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def show_nba_processed() -> None:
     st.header("NBA Processed")
     table = st.radio(
@@ -1361,6 +1615,7 @@ def main() -> None:
                 "Football Merged Processed",
                 "Football Merged Feature Engineering",
                 "NBA Raw",
+                "NBA Merge",
                 "NBA Processed",
                 "NBA Join Quality",
                 "Feature Engineering",
@@ -1381,6 +1636,8 @@ def main() -> None:
         show_football_merged_feature_engineering()
     elif page == "NBA Raw":
         show_nba_raw()
+    elif page == "NBA Merge":
+        show_nba_merge()
     elif page == "NBA Processed":
         show_nba_processed()
     elif page == "NBA Join Quality":
