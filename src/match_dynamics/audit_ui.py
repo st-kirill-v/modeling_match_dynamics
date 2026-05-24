@@ -880,127 +880,112 @@ def show_nba_raw() -> None:
 
 def show_nba_merge() -> None:
     st.header("NBA Merge")
-    st.caption(
-        "NBA raw inspection page. Merge is intentionally paused for now; movement archives are "
-        "downloaded and inspected only, and events/shots_fixed are shown separately."
-    )
+    st.caption("Итоговый NBA merge dataset: events + shots_fixed + event-level movement features.")
 
-    download_inventory = load_table("nba_merge_download_inventory.csv")
-    skipped = load_table("nba_merge_skipped_files.csv")
-    movement_inventory = load_table("nba_merge_movement_inventory.csv")
-    movement_head = load_table("nba_merge_movement_head.csv")
-    events_head = load_table("nba_merge_events_head.csv")
-    shots_head = load_table("nba_merge_shots_fixed_head.csv")
-    merge_diagnostics = load_table("nba_merge_merge_diagnostics.csv")
-    merged_summary = load_table("nba_merge_merged_summary.csv")
-    merged_head = load_table("nba_merge_merged_head.csv")
-    quality = load_table("nba_merge_merged_column_quality.csv")
-    top_missing = load_table("nba_merge_merged_top_missing_columns.csv")
-    event_file_report = load_table("nba_merge_event_file_report.csv")
-
-    if merged_summary.empty:
+    nba_path = PROJECT_ROOT / "data" / "nba" / "nba_events_shots_movement_merged_50.csv"
+    stamp = file_signature(nba_path)
+    if not nba_path.exists():
         st.info(
-            "Merge is intentionally not built yet. Showing raw downloaded NBA sources from `data/nba`."
-        )
-        raw_stamp = file_signature(PROJECT_ROOT / "data" / "nba" / "shots" / "shots_fixed.csv")
-        direct_inventory = direct_nba_file_inventory(raw_stamp)
-        st.subheader("Downloaded raw NBA files")
-        st.dataframe(direct_inventory, use_container_width=True, height=180)
-        if not direct_inventory.empty:
-            fig = px.bar(
-                direct_inventory,
-                x="files",
-                y="source",
-                orientation="h",
-                text="files",
-                title="NBA raw files currently available locally",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        movement_inventory, movement_head = inspect_direct_movement_archive(raw_stamp)
-        st.subheader("Movement sample head()")
-        st.markdown("Movement пока не мержим: это тяжелый tracking source, сейчас только sample.")
-        st.dataframe(movement_inventory, use_container_width=True, height=220)
-        st.dataframe(movement_head, use_container_width=True, height=260)
-
-        events_dir = PROJECT_ROOT / "data" / "nba" / "events"
-        event_files = sorted(events_dir.glob("*.csv")) if events_dir.exists() else []
-        event_path = event_files[0] if event_files else None
-        events_df = (
-            read_direct_csv_head(str(event_path), 50, file_signature(event_path))
-            if event_path is not None
-            else pd.DataFrame()
-        )
-        st.subheader("Events head()")
-        if event_path is not None:
-            st.caption(f"Sample file: `{event_path.name}`")
-        st.dataframe(events_df, use_container_width=True, height=320)
-        st.subheader("Events column quality")
-        st.dataframe(direct_column_quality(events_df), use_container_width=True, height=320)
-
-        shots_path = PROJECT_ROOT / "data" / "nba" / "shots" / "shots_fixed.csv"
-        shots_df = read_direct_csv_head(str(shots_path), 50, file_signature(shots_path))
-        st.subheader("Shots fixed head()")
-        st.dataframe(shots_df, use_container_width=True, height=320)
-        st.subheader("Shots fixed column quality")
-        st.dataframe(direct_column_quality(shots_df), use_container_width=True, height=320)
-
-        st.subheader("Future merge keys")
-        st.markdown(
-            """
-            Для будущего корректного merge нельзя соединять только по `GAME_ID`, потому что это
-            создаёт huge many-to-many join.
-
-            Правильная логика:
-            - `events.GAME_ID` = `shots_fixed.GAME_ID`
-            - `events.EVENTNUM` = `shots_fixed.GAME_EVENT_ID`
-            """
+            "Dataset not found. Build it first: "
+            "`uv run python scripts/build_nba_movement_for_merged_50.py`."
         )
         return
 
-    st.subheader("Download inventory")
-    st.dataframe(download_inventory, use_container_width=True, height=260)
-    if not download_inventory.empty:
-        fig = px.bar(
-            download_inventory.groupby("source_type", as_index=False)
-            .agg(files=("local_path", "count"), size_mb=("size_mb", "sum"))
-            .sort_values("files"),
-            x="files",
-            y="source_type",
-            orientation="h",
-            text="files",
-            title="Downloaded / cached NBA source files",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    sample = read_csv_head(str(nba_path), 200, stamp)
+    row_count = sum(1 for _ in nba_path.open(encoding="utf-8")) - 1
+    unique_games = sample["GAME_ID"].nunique() if "GAME_ID" in sample else 0
+    movement_cols = [
+        c
+        for c in sample.columns
+        if c
+        in {
+            "movement_moments_total",
+            "movement_moments_sampled",
+            "game_clock_start",
+            "game_clock_end",
+            "shot_clock_start",
+            "shot_clock_end",
+            "avg_distance",
+            "std_distance",
+            "spread_x",
+            "spread_y",
+            "ball_x",
+            "ball_y",
+            "ball_hoop_dist",
+            "min_player_hoop_dist",
+            "players_near_hoop",
+            "low_shot_clock",
+            "intensity",
+        }
+    ]
+    movement_matched_rows = (
+        int(sample[movement_cols].notna().any(axis=1).sum()) if movement_cols else 0
+    )
 
-    if not skipped.empty:
-        with st.expander("Skipped / cached / failed files"):
-            st.dataframe(skipped, use_container_width=True, height=260)
+    summary = pd.DataFrame(
+        [
+            {"metric": "dataset", "value": str(nba_path)},
+            {"metric": "rows", "value": row_count},
+            {"metric": "columns", "value": len(sample.columns)},
+            {"metric": "unique_GAME_ID_in_preview", "value": unique_games},
+            {"metric": "movement_columns", "value": len(movement_cols)},
+            {"metric": "movement_matched_rows_in_preview", "value": movement_matched_rows},
+            {
+                "metric": "merge_keys",
+                "value": "events.GAME_ID + events.EVENTNUM -> shots.GAME_ID + shots.GAME_EVENT_ID -> movement.GAME_ID + movement.EVENTNUM",
+            },
+        ]
+    )
+    st.subheader("Merge summary")
+    st.dataframe(summary, use_container_width=True)
 
-    st.subheader("Movement sample head()")
-    st.markdown("Movement пока не входит в основной merge, потому что tracking data тяжелые.")
-    st.dataframe(movement_inventory, use_container_width=True, height=220)
-    st.dataframe(movement_head, use_container_width=True, height=260)
+    cols = st.columns(4)
+    cols[0].metric("Rows", f"{row_count:,}".replace(",", " "))
+    cols[1].metric("Columns", len(sample.columns))
+    cols[2].metric("Preview games", int(unique_games))
+    cols[3].metric("Movement columns", len(movement_cols))
 
-    st.subheader("Events head()")
-    st.dataframe(events_head, use_container_width=True, height=320)
-    with st.expander("Events file read diagnostics"):
-        st.dataframe(event_file_report, use_container_width=True, height=320)
+    st.subheader("head() with all columns")
+    head_rows = st.slider(
+        "Rows to show from data/nba/nba_events_shots_movement_merged_50.csv",
+        5,
+        200,
+        30,
+        key="nba_merge_movement_head_rows",
+    )
+    head = read_csv_head(str(nba_path), head_rows, stamp)
+    st.dataframe(head, use_container_width=True, height=620)
 
-    st.subheader("Shots fixed head()")
-    st.dataframe(shots_head, use_container_width=True, height=320)
-
-    st.subheader("Merge diagnostics")
-    st.dataframe(merge_diagnostics, use_container_width=True, height=220)
-    st.dataframe(merged_summary, use_container_width=True, height=260)
-
-    st.subheader("Merged head()")
-    st.dataframe(merged_head, use_container_width=True, height=360)
+    st.subheader("Compact preview: key columns")
+    key_cols = [
+        "GAME_ID",
+        "EVENTNUM",
+        "EVENTMSGTYPE",
+        "PERIOD_event",
+        "PCTIMESTRING",
+        "HOMEDESCRIPTION",
+        "VISITORDESCRIPTION",
+        "SCORE",
+        "ACTION_TYPE",
+        "SHOT_TYPE",
+        "SHOT_MADE_FLAG",
+        "movement_moments_total",
+        "game_clock_start",
+        "shot_clock_start",
+        "ball_hoop_dist",
+        "players_near_hoop",
+        "intensity",
+    ]
+    st.dataframe(
+        head[[c for c in key_cols if c in head.columns]], use_container_width=True, height=420
+    )
 
     st.subheader("Merged columns: data types and quality")
+    quality = direct_column_quality(sample)
     st.dataframe(quality, use_container_width=True, height=420)
 
     st.subheader("Top missing columns")
+    top_missing = quality.sort_values("null_percent", ascending=False).head(40)
     st.dataframe(top_missing, use_container_width=True, height=320)
     if not top_missing.empty:
         plot_df = top_missing.sort_values("null_percent", ascending=True).tail(30)

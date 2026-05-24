@@ -61,6 +61,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only download limited source files; do not build the merged dataset.",
     )
+    parser.add_argument(
+        "--include-movement",
+        action="store_true",
+        help="Add event-level movement aggregates to the events+shots merge.",
+    )
+    parser.add_argument("--moment-stride", type=int, default=50)
     return parser.parse_args()
 
 
@@ -90,7 +96,12 @@ def main() -> None:
         return
 
     if args.skip_download:
-        reports = build_nba_events_shots_merge(paths, max_events=args.max_events)
+        reports = build_nba_events_shots_merge(
+            paths,
+            max_events=args.max_events,
+            include_movement=args.include_movement,
+            moment_stride=args.moment_stride,
+        )
     else:
         reports = run_nba_merge_pipeline(
             paths,

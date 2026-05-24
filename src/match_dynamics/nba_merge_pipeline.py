@@ -11,6 +11,8 @@ from urllib.parse import quote
 import pandas as pd
 import py7zr
 
+from .nba import parse_nba_event_level_movement
+
 
 REPO_API_DATA_URL = "https://api.github.com/repos/sealneaward/nba-movement-data/contents/data"
 REPO_API_EVENTS_URL = (
@@ -28,6 +30,10 @@ class NbaMergePaths:
     merged_csv: Path
     audit_dir: Path
     report_dir: Path
+
+    @property
+    def movement_json_dir(self) -> Path:
+        return self.data_dir / "movement_json"
 
 
 def github_raw_url(relative_path: str) -> str:
@@ -222,6 +228,204 @@ def read_events(events_dir: Path, limit: int = 500) -> tuple[pd.DataFrame, pd.Da
     return events, pd.DataFrame(rows)
 
 
+def read_events_for_game_ids(
+    events_dir: Path, game_ids: set[int]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = []
+    frames = []
+    for game_id in sorted(game_ids):
+        path = events_dir / f"{game_id:010d}.csv"
+        try:
+            df = pd.read_csv(path)
+            df["source_file"] = path.name
+            frames.append(df)
+            rows.append(
+                {
+                    "file": path.name,
+                    "rows": len(df),
+                    "columns": len(df.columns),
+                    "readable": True,
+                    "warning": "",
+                }
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "file": path.name,
+                    "rows": 0,
+                    "columns": 0,
+                    "readable": False,
+                    "warning": str(exc),
+                }
+            )
+    events = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+    return events, pd.DataFrame(rows)
+
+
+def extract_first_movement_jsons(
+    movement_dir: Path,
+    output_dir: Path,
+    limit: int,
+) -> tuple[list[Path], pd.DataFrame]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_files: list[Path] = []
+    rows = []
+    for archive_path in sorted(movement_dir.glob("*.7z")):
+        if len(json_files) >= limit:
+            break
+        try:
+            with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+                names = [name for name in archive.getnames() if name.lower().endswith(".json")]
+                if not names:
+                    rows.append(
+                        {
+                            "archive_name": archive_path.name,
+                            "game_id": pd.NA,
+                            "matched_requested_game": False,
+                            "json_path": "",
+                            "warning": "no_json_inside",
+                        }
+                    )
+                    continue
+                json_name = names[0]
+                output_path = output_dir / Path(json_name).name
+                if not output_path.exists() or output_path.stat().st_size == 0:
+                    archive.extract(path=output_dir, targets=[json_name])
+                    extracted = output_dir / json_name
+                    if extracted != output_path:
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        extracted.replace(output_path)
+                with output_path.open(encoding="utf-8") as f:
+                    payload = json.load(f)
+                game_id = int(payload.get("gameid", output_path.stem))
+                json_files.append(output_path)
+                rows.append(
+                    {
+                        "archive_name": archive_path.name,
+                        "game_id": game_id,
+                        "matched_requested_game": True,
+                        "json_path": str(output_path),
+                        "warning": "",
+                    }
+                )
+        except Exception as exc:
+            rows.append(
+                {
+                    "archive_name": archive_path.name,
+                    "game_id": pd.NA,
+                    "matched_requested_game": False,
+                    "json_path": "",
+                    "warning": str(exc),
+                }
+            )
+            continue
+    return json_files, pd.DataFrame(rows)
+
+
+def extract_movement_jsons_for_games(
+    movement_dir: Path,
+    output_dir: Path,
+    game_ids: set[int],
+) -> tuple[list[Path], pd.DataFrame]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    found: dict[int, Path] = {}
+    rows = []
+    for archive_path in sorted(movement_dir.glob("*.7z")):
+        if len(found) >= len(game_ids):
+            break
+        try:
+            with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+                names = [name for name in archive.getnames() if name.lower().endswith(".json")]
+                if not names:
+                    rows.append(
+                        {
+                            "archive_name": archive_path.name,
+                            "game_id": pd.NA,
+                            "matched_requested_game": False,
+                            "json_path": "",
+                            "warning": "no_json_inside",
+                        }
+                    )
+                    continue
+                json_name = names[0]
+                output_path = output_dir / Path(json_name).name
+                if not output_path.exists() or output_path.stat().st_size == 0:
+                    archive.extract(path=output_dir, targets=[json_name])
+                    extracted = output_dir / json_name
+                    if extracted != output_path:
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        extracted.replace(output_path)
+                with output_path.open(encoding="utf-8") as f:
+                    payload = json.load(f)
+                game_id = int(payload.get("gameid", output_path.stem))
+                matched = game_id in game_ids
+                if matched:
+                    found[game_id] = output_path
+                rows.append(
+                    {
+                        "archive_name": archive_path.name,
+                        "game_id": game_id,
+                        "matched_requested_game": matched,
+                        "json_path": str(output_path),
+                        "warning": "",
+                    }
+                )
+        except Exception as exc:
+            rows.append(
+                {
+                    "archive_name": archive_path.name,
+                    "game_id": pd.NA,
+                    "matched_requested_game": False,
+                    "json_path": "",
+                    "warning": str(exc),
+                }
+            )
+            continue
+    return list(found.values()), pd.DataFrame(rows)
+
+
+def build_event_level_movement(
+    paths: NbaMergePaths,
+    game_ids: set[int],
+    moment_stride: int = 50,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    json_files, extraction_report = extract_movement_jsons_for_games(
+        paths.movement_dir,
+        paths.movement_json_dir,
+        game_ids,
+    )
+    movement = parse_nba_event_level_movement(
+        json_files,
+        max_games=len(json_files),
+        moment_stride=moment_stride,
+    )
+    if movement.empty:
+        return movement, extraction_report
+    movement = movement.rename(columns={"game_id_int": "GAME_ID", "event_id": "EVENTNUM"})
+    return movement, extraction_report
+
+
+def build_first_event_level_movement(
+    paths: NbaMergePaths,
+    limit: int,
+    moment_stride: int = 50,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    json_files, extraction_report = extract_first_movement_jsons(
+        paths.movement_dir,
+        paths.movement_json_dir,
+        limit=limit,
+    )
+    movement = parse_nba_event_level_movement(
+        json_files,
+        max_games=len(json_files),
+        moment_stride=moment_stride,
+    )
+    if movement.empty:
+        return movement, extraction_report
+    movement = movement.rename(columns={"game_id_int": "GAME_ID", "event_id": "EVENTNUM"})
+    return movement, extraction_report
+
+
 def column_quality(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for col in df.columns:
@@ -281,13 +485,31 @@ def select_merge_keys(
 
 
 def build_nba_events_shots_merge(
-    paths: NbaMergePaths, max_events: int = 500
+    paths: NbaMergePaths,
+    max_events: int = 500,
+    include_movement: bool = False,
+    moment_stride: int = 50,
 ) -> dict[str, pd.DataFrame]:
     paths.audit_dir.mkdir(parents=True, exist_ok=True)
     paths.report_dir.mkdir(parents=True, exist_ok=True)
 
     movement_inventory, movement_head = inspect_movement_archive(paths.movement_dir)
-    events_df, event_file_report = read_events(paths.events_dir, limit=max_events)
+    movement_df = pd.DataFrame()
+    movement_extraction = pd.DataFrame()
+    if include_movement:
+        movement_df, movement_extraction = build_first_event_level_movement(
+            paths,
+            limit=max_events,
+            moment_stride=moment_stride,
+        )
+        movement_game_ids = (
+            set(movement_df["GAME_ID"].dropna().astype(int).unique().tolist())
+            if "GAME_ID" in movement_df
+            else set()
+        )
+        events_df, event_file_report = read_events_for_game_ids(paths.events_dir, movement_game_ids)
+    else:
+        events_df, event_file_report = read_events(paths.events_dir, limit=max_events)
     shots_path = paths.shots_dir / "shots_fixed.csv"
     shots_df = pd.read_csv(shots_path) if shots_path.exists() else pd.DataFrame()
 
@@ -304,6 +526,20 @@ def build_nba_events_shots_merge(
         how="left",
         suffixes=("_event", "_shot"),
     )
+
+    if include_movement:
+        if not movement_df.empty:
+            movement_feature_cols = [
+                col for col in movement_df.columns if col not in {"game_id", "GAME_ID", "EVENTNUM"}
+            ]
+            movement_small = movement_df[["GAME_ID", "EVENTNUM", *movement_feature_cols]].copy()
+            merged = merged.merge(
+                movement_small,
+                on=["GAME_ID", "EVENTNUM"],
+                how="left",
+                suffixes=("", "_movement"),
+            )
+
     paths.merged_csv.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(paths.merged_csv, index=False)
 
@@ -316,6 +552,11 @@ def build_nba_events_shots_merge(
             {"metric": "events_files_readable", "value": int(event_file_report["readable"].sum())},
             {"metric": "events_shape", "value": str(events_df.shape)},
             {"metric": "shots_fixed_shape", "value": str(shots_df.shape)},
+            {"metric": "movement_shape", "value": str(movement_df.shape)},
+            {
+                "metric": "movement_games_matched",
+                "value": int(movement_df["GAME_ID"].nunique()) if "GAME_ID" in movement_df else 0,
+            },
             {"metric": "merged_shape", "value": str(merged.shape)},
             {
                 "metric": "merged_unique_GAME_ID",
@@ -338,6 +579,8 @@ def build_nba_events_shots_merge(
         "shots_fixed_head": shots_df.head(50),
         "event_file_report": event_file_report,
         "merge_diagnostics": merge_diagnostics,
+        "movement_extraction": movement_extraction,
+        "movement_features_head": movement_df.head(50),
         "merged_summary": summary,
         "merged_head": merged.head(50),
         "merged_column_quality": quality,
